@@ -1,13 +1,16 @@
 ﻿# Run once on the employee's PC (or double-click install.bat).
-# Verifies the login against the server, saves it (password protected with Windows DPAPI for this user),
+# Verifies the login against the server, saves it, copies agent files to %APPDATA%\StickyAgent,
 # registers autostart, and starts the agent.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $dir = Join-Path $env:APPDATA 'StickyAgent'
+$fontsDir = Join-Path $dir 'fonts'
 New-Item -ItemType Directory -Force $dir | Out-Null
+New-Item -ItemType Directory -Force $fontsDir | Out-Null
 
 $ok = $false
 while (-not $ok) {
-  $server = (Read-Host 'Server address (e.g. http://192.168.1.10:3000)').Trim()
-  if (-not $server) { $server = 'http://localhost:3000' }
+  $server = (Read-Host 'Server address [press Enter for https://sticky.abdallaswe.tech]').Trim()
+  if (-not $server) { $server = 'https://sticky.abdallaswe.tech' }
   $server = $server.TrimEnd('/')
   $user = (Read-Host 'Username').Trim()
   $pass = Read-Host 'Password' -AsSecureString
@@ -24,17 +27,26 @@ while (-not $ok) {
   }
 }
 
-@{ server = $server; username = $user; password = ($pass | ConvertFrom-SecureString) } |
+@{ server = $server; username = $user; token = $r.token; password = ($pass | ConvertFrom-SecureString) } |
   ConvertTo-Json | Set-Content (Join-Path $dir 'config.json') -Encoding UTF8
 
-$agent = Join-Path $PSScriptRoot 'agent.ps1'
-$cmd = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$agent`""
+# Copy agent.ps1 and fonts into %APPDATA%\StickyAgent so no project folder is needed on the user's PC
+$srcAgent = Join-Path $PSScriptRoot 'agent.ps1'
+$dstAgent = Join-Path $dir 'agent.ps1'
+if ((Test-Path $srcAgent) -and ($srcAgent -ne $dstAgent)) {
+  Copy-Item $srcAgent $dstAgent -Force
+  if (Test-Path (Join-Path $PSScriptRoot 'fonts')) {
+    Copy-Item (Join-Path $PSScriptRoot 'fonts\*') $fontsDir -Force
+  }
+}
+
+$cmd = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dstAgent`""
 $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'StickyNotesAgent.lnk'
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
-$s.TargetPath = 'powershell.exe'; $s.Arguments = $cmd; $s.WorkingDirectory = $PSScriptRoot; $s.WindowStyle = 7; $s.Save()
+$s.TargetPath = 'powershell.exe'; $s.Arguments = $cmd; $s.WorkingDirectory = $dir; $s.WindowStyle = 7; $s.Save()
 
 # stop any agent already running so the new login takes effect
-Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*-File*agent.ps1*' -and $_.ProcessId -ne $PID } |
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*agent.ps1*' -and $_.ProcessId -ne $PID } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 Start-Process powershell.exe -ArgumentList $cmd

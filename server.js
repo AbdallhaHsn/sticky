@@ -181,7 +181,7 @@ function validateAssignee(user, assigneeId, deptId) {
 // remember the device each user logs in from (web browser or desktop agent)
 function recordDevice(u, d, req) {
   d = d || {};
-  const ip = (req.socket.remoteAddress || '').replace('::ffff:', '');
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().replace('::ffff:', '');
   const key = String(d.key || d.name || req.headers['user-agent'] || 'unknown').slice(0, 120);
   let rec = db.devices.find(x => x.userId === u.id && x.key === key);
   const now = new Date().toISOString();
@@ -215,7 +215,10 @@ function api(req, method, url, body, user) {
     return { token, user: pub(u), serverToken: token };
   }
   if (res === 'auto-login' && method === 'POST') {
-    if (user) return { token: makeToken(user.id), user: pub(user) };
+    if (user) {
+      if (body.device) recordDevice(user, body.device, req);
+      return { token: makeToken(user.id), user: pub(user) };
+    }
     const dk = String(body.device?.key || '').slice(0, 120);
     const candidates = db.devices
       .filter(x => x.key && x.key === dk && !x.loggedOut)
@@ -476,11 +479,45 @@ function api(req, method, url, body, user) {
 }
 
 // ---------- server ----------
+const DESKTOP = path.join(__dirname, 'desktop');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+  '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.ps1': 'text/plain; charset=utf-8', '.ttf': 'font/ttf' };
 
 init().then(() => http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
+  if (url === '/api/desktop-setup' && req.method === 'GET') {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    const tk = qs.get('token') || (req.headers.authorization || '').replace('Bearer ', '') || parseCookieToken(req);
+    const u = byId(db.users, verifyToken(tk));
+    if (!u) { res.writeHead(401); return res.end('Unauthorized'); }
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'sticky.abdallaswe.tech';
+    const srv = `${proto}://${host}`;
+    const userToken = makeToken(u.id);
+    const bat = [
+      '@echo off',
+      'chcp 65001 >nul',
+      'echo Configuring Smart Sticky Notes Desktop Agent for ' + u.username + '...',
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "` +
+        `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; ` +
+        `$d = Join-Path $env:APPDATA 'StickyAgent'; $f = Join-Path $d 'fonts'; ` +
+        `New-Item -ItemType Directory -Force $d | Out-Null; New-Item -ItemType Directory -Force $f | Out-Null; ` +
+        `Invoke-WebRequest -Uri '${srv}/desktop/agent.ps1' -OutFile (Join-Path $d 'agent.ps1') -UseBasicParsing; ` +
+        `foreach ($fn in 'Tajawal-Regular.ttf','Tajawal-Medium.ttf','Tajawal-Bold.ttf') { try { Invoke-WebRequest -Uri ('${srv}/desktop/fonts/' + $fn) -OutFile (Join-Path $f $fn) -UseBasicParsing } catch {} }; ` +
+        `@{ server = '${srv}'; username = '${u.username}'; token = '${userToken}' } | ConvertTo-Json | Set-Content (Join-Path $d 'config.json') -Encoding UTF8; ` +
+        `$ag = Join-Path $d 'agent.ps1'; $cmd = '-WindowStyle Hidden -ExecutionPolicy Bypass -File \\"' + $ag + '\\"'; ` +
+        `$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'StickyNotesAgent.lnk'; ` +
+        `$s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $s.TargetPath = 'powershell.exe'; $s.Arguments = $cmd; $s.WorkingDirectory = $d; $s.WindowStyle = 7; $s.Save(); ` +
+        `Get-CimInstance Win32_Process -Filter \\"Name='powershell.exe'\\" | Where-Object { $_.CommandLine -like '*agent.ps1*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; ` +
+        `Start-Process powershell.exe -ArgumentList $cmd; Write-Host 'Done! Sticky Notes Desktop Agent is now active on your desktop.' -ForegroundColor Green"`,
+      'timeout /t 3 >nul',
+    ].join('\r\n');
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': 'attachment; filename="StickyDesktopSetup.bat"',
+    });
+    return res.end(bat);
+  }
   if (url === '/api/events' && req.method === 'GET') {
     const qs = new URL(req.url, 'http://localhost').searchParams;
     const tk = qs.get('token') || (req.headers.authorization || '').replace('Bearer ', '') || parseCookieToken(req);
@@ -513,13 +550,13 @@ init().then(() => http.createServer((req, res) => {
         if (user && req.headers['x-client'] !== 'desktop') lastActiveToken = token;
         if (url === '/api/desktop-sync' && req.method === 'GET') {
           const ip = (req.socket.remoteAddress || '').replace('::ffff:', '');
-          if (ip === '127.0.0.1' || ip === '::1') {
+          if (user || ip === '127.0.0.1' || ip === '::1') {
             const qs = new URL(req.url, 'http://localhost').searchParams;
             const byName = qs.get('username') && db.users.find(x => x.username === qs.get('username'));
             const webUser = byId(db.users, verifyToken(lastActiveToken));
             const empUser = db.users.find(x => x.role === 'employee');
             const u = user || byName || webUser || empUser || db.users[0];
-            const activeAlerts = (db.alerts || []).filter(a => a.status === 'active').map(a => ({
+            const activeAlerts = (db.alerts || []).filter(a => a.status === 'active' && a.targetId === u.id).map(a => ({
               ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
             }));
             res.writeHead(200, headers);
@@ -541,6 +578,14 @@ init().then(() => http.createServer((req, res) => {
       res.end(JSON.stringify(out));
     });
     return;
+  }
+  if (url.startsWith('/desktop/')) {
+    const dfile = path.normalize(path.join(DESKTOP, url.slice('/desktop/'.length)));
+    if (!dfile.startsWith(DESKTOP) || !fs.existsSync(dfile) || fs.statSync(dfile).isDirectory()) {
+      res.writeHead(404); return res.end('Not found');
+    }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(dfile)] || 'application/octet-stream' });
+    return fs.createReadStream(dfile).pipe(res);
   }
   const file = path.normalize(path.join(PUBLIC, url === '/' ? 'index.html' : url));
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

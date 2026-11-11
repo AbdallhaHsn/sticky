@@ -1,4 +1,4 @@
-# Smart Sticky Notes - Windows desktop agent
+﻿# Smart Sticky Notes - Windows desktop agent
 # Logs in as the employee, registers this device, and shows each assigned note as a sticky note on the desktop.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace Win -Name Native -MemberDefinition @'
@@ -12,12 +12,13 @@ $cfgFile = Join-Path $dir 'config.json'
 $logFile = Join-Path $dir 'agent.log'
 function Log($m) { try { Add-Content $logFile ("{0} {1}" -f (Get-Date -Format s), $m) } catch {} }
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not (Test-Path $cfgFile)) { Write-Host 'Run install.ps1 first.'; exit 1 }
 $cfg = Get-Content $cfgFile -Raw -Encoding UTF8 | ConvertFrom-Json
-$pw = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR(($cfg.password | ConvertTo-SecureString)))
+$pw = if ($cfg.password) { try { [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR(($cfg.password | ConvertTo-SecureString))) } catch { '' } } else { '' }
 $server = $cfg.server.TrimEnd('/')
 
-$script:token = $null; $script:me = $null
+$script:token = $cfg.token; $script:me = $null
 $forms = @{}      # note id -> sticky note window
 $dots = @{}       # note id -> small circle shown when the note is minimized
 $aForms = @{}     # alert id -> distinct alert window
@@ -34,9 +35,18 @@ function Api($method, $path, $body) {
 function Login {
   $os = try { (Get-CimInstance Win32_OperatingSystem).Caption } catch { 'Windows' }
   $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $dev = @{ key = "desktop-$($env:COMPUTERNAME)-$($env:USERNAME)"; kind = 'desktop'; name = $env:COMPUTERNAME; os = $os; user = $env:USERNAME; screen = "$($screen.Width)x$($screen.Height)" }
+  if ($cfg.token) {
+    try {
+      $script:token = $cfg.token
+      $r = Api 'POST' 'auto-login' @{ device = $dev }
+      $script:token = $r.token; $script:me = $r.user
+      Log "authenticated via token as $($r.user.name)"
+      return
+    } catch {}
+  }
   try {
-    $r = Api 'POST' 'login' @{ username = $cfg.username; password = $pw; device = @{
-        key = "desktop-$($env:COMPUTERNAME)"; kind = 'desktop'; name = $env:COMPUTERNAME; os = $os; user = $env:USERNAME; screen = "$($screen.Width)x$($screen.Height)" } }
+    $r = Api 'POST' 'login' @{ username = $cfg.username; password = $pw; device = $dev }
     $script:token = $r.token; $script:me = $r.user
     Log "logged in as $($r.user.name)"
   } catch {
@@ -409,13 +419,13 @@ $tray.Add_DoubleClick({
 
 function Poll {
   try {
-    if (-not $script:token) { Login }
+    if (-not $script:token -or -not $script:me) { Login }
     try { $data = Api 'GET' 'data' $null } catch { Login; $data = Api 'GET' 'data' $null }
     $sync = try { Api 'GET' 'desktop-sync' $null } catch { $null }
   } catch { Log "poll failed: $($_.Exception.Message)"; return }
   # show open and pending notes on desktop so the employee always sees their tasks until confirmed by manager
   $script:projNames = @{}; foreach ($pr in $data.projects) { $script:projNames[$pr.id] = $pr.name }
-  $mine = if ($script:me.role -eq 'employee') { @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id }) } else { @($data.notes) }
+  $mine = @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id })
   $ids = @($mine | ForEach-Object { $_.id })
   foreach ($id in @($forms.Keys)) {           # note confirmed/removed -> take it off the desktop
     if ($ids -notcontains $id) { $forms[$id].Close(); $forms[$id].Dispose(); $forms.Remove($id); $dots[$id].Close(); $dots[$id].Dispose(); $dots.Remove($id); Layout-Dots }
@@ -433,10 +443,10 @@ function Poll {
     }
   }
 
-  # ---- sync active alerts for this user + any active web user on this machine ----
+  # ---- sync active alerts targeted to this user ----
   $alertMap = @{}
-  foreach ($a in @($data.alerts)) { if ($a -and $a.status -eq 'active' -and ($a.targetId -eq $script:me.id -or $a.userId -eq $script:me.id)) { $alertMap[$a.id] = $a } }
-  if ($sync -and $sync.extraAlerts) { foreach ($a in @($sync.extraAlerts)) { if ($a -and $a.status -eq 'active') { $alertMap[$a.id] = $a } } }
+  foreach ($a in @($data.alerts)) { if ($a -and $a.status -eq 'active' -and $a.targetId -eq $script:me.id) { $alertMap[$a.id] = $a } }
+  if ($sync -and $sync.extraAlerts) { foreach ($a in @($sync.extraAlerts)) { if ($a -and $a.status -eq 'active' -and $a.targetId -eq $script:me.id) { $alertMap[$a.id] = $a } } }
   $myAlerts = @($alertMap.Values)
   $aIds = @($myAlerts | ForEach-Object { $_.id })
   foreach ($id in @($aForms.Keys)) {
