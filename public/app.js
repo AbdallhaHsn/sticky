@@ -126,12 +126,44 @@ function pagerHtml(pg, prefix) {
   </div>`;
 }
 
-// ---- finished notes: shown compactly (one-line chips inside a collapsed section) ----
+// ---- finished & recurring scheduled notes ----
+const DAYS_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+function recurBadge(item, dark = false) {
+  if (!item || !item.recurrence || item.recurrence === 'once') return '';
+  const cls = dark ? 'bg-teal-400/20 text-teal-200 ring-1 ring-teal-400/30' : 'bg-indigo-600/15 text-indigo-950 ring-1 ring-indigo-600/25';
+  if (item.recurrence === 'daily') {
+    return `<span title="تتولد تلقائياً كل يوم الساعة ${esc(item.recurTime || '')}" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}يومية${item.recurTime ? ' • ' + esc(item.recurTime) : ''}</span>`;
+  }
+  if (item.recurrence === 'weekly') {
+    const dayName = DAYS_AR[+item.recurDay || 0] || '';
+    return `<span title="تتولد تلقائياً كل أسبوع يوم ${dayName} الساعة ${esc(item.recurTime || '')}" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}أسبوعية • ${dayName}${item.recurTime ? ' ' + esc(item.recurTime) : ''}</span>`;
+  }
+  return '';
+}
 const shortDate = d => new Date(d).toLocaleDateString('ar', { day: 'numeric', month: 'short' });
 const doneTip = d => `${d.title} — أنجزها ${nm(d.assigneeId)} • أُكّدت ${fmt(d.confirmedAt)} (اضغط لعرض التفاصيل)`;
+function scheduledSection(list) {
+  if (!list || !list.length) return '';
+  return `<details open class="mt-5 rounded-2xl bg-indigo-50/80 ring-1 ring-indigo-200"><summary class="flex cursor-pointer select-none items-center gap-2 px-4 py-2.5 text-sm font-extrabold text-indigo-900">${ic('repeat', 'text-indigo-600')}نوتات دورية أُنجزت لهذه الدورة وبانتظار موعد التوليد القادم (${list.length})<span class="ms-auto text-indigo-400">${ic('chevron-down')}</span></summary>
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3 px-4 pb-3.5">${list.map(n => `<div data-nd="sched:${n.id}" class="flex cursor-pointer flex-col gap-1.5 rounded-2xl bg-white p-3 text-xs shadow-sm ring-1 ring-indigo-200/80 transition hover:ring-indigo-400">
+      <div class="flex items-center justify-between gap-1.5">${recurBadge(n)}<span class="text-[11px] font-bold text-emerald-700">${ic('check-check', '!h-3.5 !w-3.5')}أُنجزت الدورة #${n.cycleCount || 1}</span></div>
+      <div class="font-extrabold text-slate-800">${esc(n.title)}</div>
+      <div class="text-[11px] text-slate-500">${ic('user', '!h-3 !w-3')} ${esc(nm(n.assigneeId))} • ${ic('clock', '!h-3 !w-3')} تتولد: <b class="text-indigo-700">${fmt(n.nextSpawnAt)}</b></div>
+      <div class="mt-1 flex items-center gap-1.5 border-t border-slate-100 pt-1.5">
+        <button type="button" data-a="spawn:${n.id}" class="btn btn-xs !bg-indigo-600 !text-white">${ic('zap')}توليد الآن</button>
+        <button type="button" data-a="edit:${n.id}" class="btn btn-xs btn-ghost">${ic('pencil')}تعديل الجدولة</button>
+        <button type="button" data-a="del:${n.id}" class="btn btn-xs btn-ghost !text-rose-600 ms-auto">${ic('trash-2')}</button>
+      </div>
+    </div>`).join('')}</div></details>`;
+}
+function scheduledFooter(list) {
+  if (!list || !list.length) return '';
+  return `<details class="border-t border-indigo-200 bg-indigo-50/70 text-xs"><summary class="flex cursor-pointer select-none items-center gap-1.5 px-2 py-1.5 font-bold text-indigo-800">${ic('repeat')}دورية مجدولة للقادم (${list.length})</summary>
+    <ul class="max-h-28 space-y-1 overflow-y-auto px-2 pb-2">${list.map(n => `<li data-nd="sched:${n.id}" class="flex cursor-pointer items-center gap-1 rounded bg-white/80 px-1.5 py-1 text-indigo-950 ring-1 ring-indigo-200/60 transition hover:bg-indigo-100">${ic('repeat', 'text-indigo-600')}<span class="truncate font-bold">${esc(n.title)}</span><span class="ms-auto flex-none text-[10px] text-indigo-700">${fmt(n.nextSpawnAt)}</span></li>`).join('')}</ul></details>`;
+}
 function doneSection(list) {
   if (!list.length) return '';
-  return `<details class="mt-6 rounded-2xl bg-white/80 ring-1 ring-slate-200"><summary class="flex cursor-pointer select-none items-center gap-2 px-4 py-2.5 text-sm font-bold text-emerald-700">${ic('check-check')}المنتهية (${list.length})<span class="ms-auto text-slate-400">${ic('chevron-down')}</span></summary>
+  return `<details class="mt-4 rounded-2xl bg-white/80 ring-1 ring-slate-200"><summary class="flex cursor-pointer select-none items-center gap-2 px-4 py-2.5 text-sm font-bold text-emerald-700">${ic('check-check')}المنتهية (${list.length})<span class="ms-auto text-slate-400">${ic('chevron-down')}</span></summary>
     <div class="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto px-4 pb-3">${list.map(d => `<button type="button" data-nd="done:${d.id}" title="${esc(doneTip(d))}" class="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100 hover:shadow-sm">${ic('check')}<span class="truncate">${esc(d.title)}</span><span class="text-emerald-600/70">${shortDate(d.confirmedAt)}</span></button>`).join('')}</div></details>`;
 }
 function doneFooter(list) {
@@ -347,7 +379,7 @@ function loginView() {
 function render(silent = false) {
   if (!S.me) return;
   const uiState = captureUiState();
-  const activeAlerts = (S.data?.alerts || []).filter(a => a.status === 'active' && a.targetId === S.me.id).length;
+  const activeAlerts = (S.data?.alerts || []).filter(a => a.status === 'active' && !a.waitingNextCycle && (a.isTarget || a.targetId === S.me.id || a.targetId === 'all')).length;
   const tb = (t, l, i, badge = 0) => `<button data-t="${t}" class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${S.tab === t ? 'bg-white text-brand-700 shadow' : 'text-indigo-100 hover:bg-white/10'}">${ic(i)}${l}${badge ? `<span class="ms-0.5 rounded-full bg-teal-400 px-1.5 py-0.2 text-[11px] font-extrabold text-slate-900">${badge}</span>` : ''}</button>`;
   $('#app').innerHTML = `<header class="flex flex-wrap items-center gap-3 bg-brand-900 px-5 py-2.5 text-white shadow-md">
     <div class="flex items-center gap-2 text-lg font-extrabold"><span class="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-300 text-amber-900 -rotate-6">${ic('sticky-note')}</span>النوتات الذكية</div>
@@ -535,6 +567,7 @@ function renderBoardMain() {
 
     <div class="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-5">${pg.items.map(noteHtml).join('') || empty('inbox', hasFilters ? 'لا توجد نوتات تطابق البحث أو الفلتر' : 'لا توجد نوتات')}</div>
     ${pagerHtml(pg, 'b')}
+    ${scheduledSection(S.sel?.type === 'note' ? [] : (S.data.scheduledNotes || []).filter(n => scopeIds.has(n.projectId) && (!q || n.title.toLowerCase().includes(q))))}
     ${doneSection(S.sel?.type === 'note' ? [] : S.data.done.filter(d => scopeIds.has(d.projectId) && (!q || d.title.toLowerCase().includes(q))))}`;
 
   if ($('#npn')) $('#npn').onclick = () => personalNoteForm(null, null, proj);
@@ -584,6 +617,7 @@ function noteHtml(n) {
     <div class="flex items-center justify-between gap-1.5">
       <span class="chip ${p.badge}">${ic(p.icon, '!h-3.5 !w-3.5')}${p.label}</span>
       <div class="flex min-w-0 items-center gap-1">
+        ${recurBadge(n)}
         ${own ? `<span class="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-extrabold">📌 خاصة</span>` : ''}
         <span title="${esc(proj?.name || '')}" class="inline-flex max-w-[8rem] items-center gap-1 rounded-full bg-white/60 px-2 py-0.5 text-[11px] font-bold ring-1 ring-black/10"><span class="truncate">${esc(proj?.name || '')}</span></span>
       </div>
@@ -610,12 +644,23 @@ function noteHtml(n) {
 function bindNoteActions() {
   document.querySelectorAll('[data-a]').forEach(b => b.onclick = guard(async e => {
     e.stopPropagation();
-    const [a, id] = b.dataset.a.split(':'), n = S.data.notes.find(x => x.id === id), proj = S.data.projects.find(p => p.id === n.projectId);
+    const [a, id] = b.dataset.a.split(':');
+    const n = S.data.notes.find(x => x.id === id) || (S.data.scheduledNotes || []).find(x => x.id === id);
+    if (!n) return;
+    const proj = S.data.projects.find(p => p.id === n.projectId);
     if (a === 'done') {
       const r = await call('POST', `notes/${id}/done`);
-      toast(r.autoConfirmed ? 'تم إنجاز النوتة الخاصة ونقلها للأرشيف' : 'تم الإرسال للمدير للتأكيد');
+      if (r.recurringNextAt) toast(`تم إنجاز نوتة هذه الدورة وستتولد تلقائياً في: ${fmt(r.recurringNextAt)}`);
+      else toast(r.autoConfirmed ? 'تم إنجاز النوتة الخاصة ونقلها للأرشيف' : 'تم الإرسال للمدير للتأكيد');
     }
-    else if (a === 'confirm') { await call('POST', `notes/${id}/confirm`); toast('تم التأكيد وحذف النوتة من الشجرة'); }
+    else if (a === 'confirm') {
+      const r = await call('POST', `notes/${id}/confirm`);
+      toast(r.recurringNextAt ? `تم تأكيد الإنجاز وجدولة الدورة القادمة تلقائياً (${fmt(r.recurringNextAt)})` : 'تم التأكيد وحذف النوتة من الشجرة');
+    }
+    else if (a === 'spawn') {
+      await call('POST', `notes/${id}/spawn-now`);
+      toast('تم توليد النوتة الدورية وتفعيلها الآن');
+    }
     else if (a === 'reject') return ask({ title: 'إرجاع النوتة للموظف', body: `أدخل سبب الإرجاع للنوتة "${n.title}" (اختياري):`, okText: 'إرجاع النوتة', icon: 'undo-2', tone: 'danger', inputPlaceholder: 'سبب الإرجاع...' },
       async reason => { await call('POST', `notes/${id}/reject`, { reason }); await refresh(); });
     else if (a === 'del') return ask({ title: 'حذف النوتة', body: `سيتم حذف النوتة "${n.title}" وجميع النوتات الفرعية التابعة لها نهائياً.`, okText: 'حذف النوتة', icon: 'trash-2', tone: 'danger' },
@@ -633,9 +678,10 @@ function bindNoteDetailClicks() {
     const [src, id] = el.dataset.nd.split(':');
     let item;
     if (src === 'open') item = S.data.notes.find(x => x.id === id);
+    else if (src === 'sched') item = (S.data.scheduledNotes || []).find(x => x.id === id);
     else if (src === 'done') item = S.data.done.find(x => x.id === id);
     else if (src === 'hist') item = cachedHistory.find(x => x.id === id);
-    if (item) showNoteDetails(item, src !== 'open');
+    if (item) showNoteDetails(item, src === 'done' || src === 'hist');
   });
 }
 
@@ -684,7 +730,7 @@ function showNoteDetails(n, isArchived = false) {
   m.innerHTML = `<div class="max-h-[90vh] w-full max-w-xl overflow-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
     <div class="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
       <div class="min-w-0 flex-1">
-        <div class="mb-1.5 flex flex-wrap items-center gap-2">${statusChip}<span class="text-xs text-slate-400">#${esc(n.id)}</span></div>
+        <div class="mb-1.5 flex flex-wrap items-center gap-2">${statusChip}${recurBadge(n)}<span class="text-xs text-slate-400">#${esc(n.id)}</span></div>
         <h3 class="break-words text-xl font-extrabold leading-snug text-slate-800">${esc(n.title)}</h3>
       </div>
       <button type="button" id="cx" class="btn btn-ghost btn-sm !p-1.5">${ic('x')}</button>
@@ -728,12 +774,23 @@ function showNoteDetails(n, isArchived = false) {
   if ($('#md-acts')) {
     $('#md-acts').querySelectorAll('[data-a]').forEach(b => b.onclick = guard(async () => {
       hideModal();
-      const [a, id] = b.dataset.a.split(':'), note = S.data.notes.find(x => x.id === id), prj = S.data.projects.find(p => p.id === note.projectId);
+      const [a, id] = b.dataset.a.split(':');
+      const note = S.data.notes.find(x => x.id === id) || (S.data.scheduledNotes || []).find(x => x.id === id);
+      if (!note) return;
+      const prj = S.data.projects.find(p => p.id === note.projectId);
       if (a === 'done') {
         const r = await call('POST', `notes/${id}/done`);
-        toast(r.autoConfirmed ? 'تم إنجاز النوتة الخاصة ونقلها للأرشيف' : 'تم الإرسال للمدير للتأكيد');
+        if (r.recurringNextAt) toast(`تم إنجاز نوتة هذه الدورة وستتولد تلقائياً في: ${fmt(r.recurringNextAt)}`);
+        else toast(r.autoConfirmed ? 'تم إنجاز النوتة الخاصة ونقلها للأرشيف' : 'تم الإرسال للمدير للتأكيد');
       }
-      else if (a === 'confirm') { await call('POST', `notes/${id}/confirm`); toast('تم التأكيد وحذف النوتة من الشجرة'); }
+      else if (a === 'confirm') {
+        const r = await call('POST', `notes/${id}/confirm`);
+        toast(r.recurringNextAt ? `تم تأكيد الإنجاز وجدولة الدورة القادمة تلقائياً (${fmt(r.recurringNextAt)})` : 'تم التأكيد وحذف النوتة من الشجرة');
+      }
+      else if (a === 'spawn') {
+        await call('POST', `notes/${id}/spawn-now`);
+        toast('تم توليد النوتة الدورية وتفعيلها الآن');
+      }
       else if (a === 'reject') return ask({ title: 'إرجاع النوتة للموظف', body: `أدخل سبب الإرجاع للنوتة "${note.title}" (اختياري):`, okText: 'إرجاع النوتة', icon: 'undo-2', tone: 'danger', inputPlaceholder: 'سبب الإرجاع...' },
         async reason => { await call('POST', `notes/${id}/reject`, { reason }); await refresh(); });
       else if (a === 'del') return ask({ title: 'حذف النوتة', body: `سيتم حذف النوتة "${note.title}" وجميع النوتات الفرعية التابعة لها نهائياً.`, okText: 'حذف النوتة', icon: 'trash-2', tone: 'danger' },
@@ -793,7 +850,10 @@ function treeView() {
             <span title="${esc(pr.label)} — ${esc(statusTxt)}" class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${pr.badge}">
               ${ic(pr.icon, '!h-3 !w-3')}<span class="truncate">${esc(statusTxt)}</span>
             </span>
-            ${isOwnPersonal(n) ? `<span class="flex-none rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] font-extrabold">📌 خاصة</span>` : ''}
+            <div class="flex flex-none items-center gap-1">
+              ${recurBadge(n)}
+              ${isOwnPersonal(n) ? `<span class="flex-none rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] font-extrabold">📌 خاصة</span>` : ''}
+            </div>
           </div>
           <h4 title="${esc(n.title)}" class="clamp-2 text-[13px] font-extrabold leading-snug">${esc(n.title)}</h4>
           ${par ? `<div title="فرعية من: ${esc(par.title)}" class="mt-1 flex min-w-0 items-center gap-1 rounded-md bg-black/[0.06] px-1.5 py-0.5 text-[10px] opacity-85">${ic('corner-down-left', '!h-3 !w-3 flex-none opacity-70')}<span class="truncate">${esc(par.title)}</span></div>` : ''}
@@ -829,6 +889,7 @@ function treeView() {
         <div class="pointer-events-none absolute inset-y-2 left-1/2 w-[2px] -translate-x-1/2 rounded-full bg-gradient-to-b from-indigo-300 via-slate-300 to-slate-200/40"></div>
         ${items || `<div class="relative z-10 m-auto flex flex-col items-center gap-1.5 rounded-2xl bg-slate-50/90 px-4 py-6 text-center text-xs text-slate-400 ring-1 ring-slate-100">${ic('check-check', '!h-6 !w-6 text-emerald-400')}<span>لا توجد نوتات نشطة</span></div>`}
       </div>
+      ${scheduledFooter((S.data.scheduledNotes || []).filter(n => n.projectId === p.id))}
       ${doneFooter(S.data.done.filter(d => d.projectId === p.id))}</section>`;
   };
 
@@ -991,18 +1052,95 @@ function newProject() {
   if (S.me.role === 'admin') f.unshift({ k: 'deptId', label: 'القسم', type: 'select', options: S.data.departments.map(d => ({ v: d.id, t: d.name })) });
   form('مشروع جديد', f, b => call('POST', 'projects', b).then(p => { S.sel = { type: 'proj', id: p.id }; S.open.add(p.id); S.open.add(p.deptId); return refresh(); }));
 }
+function recurrenceBoxHtml(item) {
+  const rec = item?.recurrence || 'once';
+  const defTime = item?.recurTime || new Date(item?.start || item?.eventAt || Date.now()).toTimeString().slice(0, 5) || '09:00';
+  const defDay = item?.recurDay !== undefined && item?.recurDay !== null ? +item.recurDay : new Date(item?.start || item?.eventAt || Date.now()).getDay();
+  return `<div class="mt-3 rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200/80">
+    <label class="label !mt-0 flex items-center gap-1.5 text-indigo-950">${ic('repeat', 'text-indigo-600')}نوع الجدولة والتكرار التلقائي</label>
+    <select name="recurrence" id="rec-type" class="input">
+      <option value="once" ${rec === 'once' ? 'selected' : ''}>📌 لمرة واحدة فقط</option>
+      <option value="daily" ${rec === 'daily' ? 'selected' : ''}>🔄 دورية — يومية (تتولد تلقائياً كل يوم في الموعد المحدد)</option>
+      <option value="weekly" ${rec === 'weekly' ? 'selected' : ''}>📅 دورية — أسبوعية (تتولد تلقائياً كل أسبوع في اليوم والوقت المحددين)</option>
+    </select>
+    <div id="rec-opts" class="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2 ${rec === 'once' ? 'hidden' : ''}">
+      <div id="rec-day-wrap" class="${rec === 'weekly' ? '' : 'hidden'}">
+        <label class="label !mt-0">يوم التوليد الأسبوعي</label>
+        <select name="recurDay" class="input">
+          ${DAYS_AR.map((d, idx) => `<option value="${idx}" ${defDay === idx ? 'selected' : ''}>يوم ${d}</option>`).join('')}
+        </select>
+      </div>
+      <div id="rec-time-wrap" class="${rec === 'weekly' ? '' : 'sm:col-span-2'}">
+        <label class="label !mt-0">وقت التوليد التلقائي</label>
+        <input name="recurTime" type="time" value="${esc(defTime)}" class="input">
+      </div>
+    </div>
+    <p id="rec-hint" class="mt-2 text-[11px] leading-relaxed text-indigo-800 ${rec === 'once' ? 'hidden' : ''}">
+      💡 عند إنهاء نوتة اليوم، تُحفظ نسخة اليوم في الأرشيف وتتجدول النوتة تلقائياً للدورة القادمة في الموعد المحدد أعلاه.
+    </p>
+  </div>`;
+}
+function bindRecurrenceBox(container) {
+  const sel = container.querySelector('#rec-type');
+  if (!sel) return;
+  const opts = container.querySelector('#rec-opts');
+  const dayWrap = container.querySelector('#rec-day-wrap');
+  const timeWrap = container.querySelector('#rec-time-wrap');
+  const hint = container.querySelector('#rec-hint');
+  sel.onchange = () => {
+    const v = sel.value;
+    opts.classList.toggle('hidden', v === 'once');
+    hint.classList.toggle('hidden', v === 'once');
+    dayWrap.classList.toggle('hidden', v !== 'weekly');
+    timeWrap.classList.toggle('sm:col-span-2', v !== 'weekly');
+  };
+}
+
 function noteForm(proj, note, parentId) {
   const emps = S.data.users.filter(u => u.role === 'employee' && u.deptId === proj.deptId);
   if (!emps.length) return toast('لا يوجد موظفون في قسم هذا المشروع');
-  form(note ? 'تعديل نوتة' : parentId ? 'نوتة فرعية' : 'نوتة جديدة', [
-    { k: 'title', label: 'العنوان', value: note?.title },
-    { k: 'description', label: 'الوصف', type: 'textarea', value: note?.description },
-    { k: 'assigneeId', label: 'إسناد إلى', type: 'select', value: note?.assigneeId, options: emps.map(u => ({ v: u.id, t: u.name })) },
-    { k: 'start', label: 'تاريخ البداية', type: 'datetime-local', value: toLocalInput(note?.start || new Date()) },
-    { k: 'end', label: 'تاريخ النهاية', type: 'datetime-local', value: toLocalInput(note?.end || new Date(Date.now() + 7 * 864e5)) },
-  ], b => {
-    b.start = new Date(b.start).toISOString(); b.end = new Date(b.end).toISOString();
-    return (note ? call('PUT', 'notes/' + note.id, b) : call('POST', 'notes', { ...b, projectId: proj.id, parentId: parentId || null })).then(refresh);
+  S.detailNoteId = null;
+  const m = $('#modal');
+  const titleTxt = note ? 'تعديل نوتة' : parentId ? 'نوتة فرعية' : 'نوتة جديدة للمشروع';
+  m.innerHTML = `<form class="max-h-[92vh] w-full max-w-lg overflow-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+    <h3 class="mb-2 text-lg font-extrabold text-slate-800">${esc(titleTxt)}</h3>
+    <label class="label">العنوان</label>
+    <input name="title" value="${esc(note?.title || '')}" class="input" required autofocus>
+    <label class="label">الوصف والتفاصيل</label>
+    <textarea name="description" rows="3" class="input">${esc(note?.description || '')}</textarea>
+    <label class="label">إسناد إلى الموظف</label>
+    <select name="assigneeId" class="input">
+      ${emps.map(u => `<option value="${u.id}" ${note?.assigneeId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+    </select>
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label class="label">تاريخ ووقت البداية</label>
+        <input name="start" type="datetime-local" value="${toLocalInput(note?.start || new Date())}" class="input" required>
+      </div>
+      <div>
+        <label class="label">تاريخ ووقت النهاية</label>
+        <input name="end" type="datetime-local" value="${toLocalInput(note?.end || new Date(Date.now() + 864e5))}" class="input" required>
+      </div>
+    </div>
+    ${recurrenceBoxHtml(note)}
+    <div class="mt-5 flex gap-2">
+      <button class="btn">${ic('check')}حفظ النوتة</button>
+      <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
+    </div>
+  </form>`;
+  showModal();
+  $('#cx').onclick = hideModal;
+  bindRecurrenceBox(m);
+  m.querySelector('form').onsubmit = guard(async e => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    b.start = new Date(b.start).toISOString();
+    b.end = new Date(b.end).toISOString();
+    b.recurDay = +b.recurDay;
+    b.tzOffsetMin = new Date().getTimezoneOffset();
+    await (note ? call('PUT', 'notes/' + note.id, b) : call('POST', 'notes', { ...b, projectId: proj.id, parentId: parentId || null }));
+    hideModal();
+    await refresh();
   });
 }
 
@@ -1010,26 +1148,54 @@ function personalNoteForm(note = null, parentId = null, defaultProj = null) {
   const otherProjs = S.data.projects.filter(p => !p.personal);
   const projOpts = [{ v: 'personal', t: '📌 نوتاتي الخاصة (شخصية)' }, ...otherProjs.map(p => ({ v: p.id, t: `📁 ${p.name}` }))];
   const initProj = defaultProj && !defaultProj.personal ? defaultProj.id : 'personal';
-  const fields = [
-    { k: 'title', label: 'عنوان النوتة الخاصة', value: note?.title },
-    { k: 'description', label: 'الوصف والتفاصيل', type: 'textarea', value: note?.description, req: false },
-  ];
-  if (!note && !parentId && otherProjs.length) {
-    fields.push({ k: 'projectId', label: 'التصنيف / المشروع', type: 'select', value: initProj, options: projOpts });
-  }
-  fields.push(
-    { k: 'start', label: 'تاريخ البداية', type: 'datetime-local', value: toLocalInput(note?.start || new Date()) },
-    { k: 'end', label: 'تاريخ النهاية', type: 'datetime-local', value: toLocalInput(note?.end || new Date(Date.now() + 3 * 864e5)) }
-  );
-  form(note ? 'تعديل نوتة خاصة' : parentId ? 'إضافة نوتة فرعية خاصة' : 'إضافة نوتة خاصة بي', fields, b => {
+  S.detailNoteId = null;
+  const m = $('#modal');
+  const titleTxt = note ? 'تعديل نوتة خاصة' : parentId ? 'إضافة نوتة فرعية خاصة' : 'إضافة نوتة خاصة بي';
+  m.innerHTML = `<form class="max-h-[92vh] w-full max-w-lg overflow-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+    <h3 class="mb-2 text-lg font-extrabold text-slate-800">${esc(titleTxt)}</h3>
+    <label class="label">عنوان النوتة الخاصة</label>
+    <input name="title" value="${esc(note?.title || '')}" class="input" required autofocus>
+    <label class="label">الوصف والتفاصيل (اختياري)</label>
+    <textarea name="description" rows="3" class="input">${esc(note?.description || '')}</textarea>
+    ${!note && !parentId && otherProjs.length ? `<label class="label">التصنيف / المشروع</label>
+    <select name="projectId" class="input">
+      ${projOpts.map(o => `<option value="${esc(o.v)}" ${o.v === initProj ? 'selected' : ''}>${esc(o.t)}</option>`).join('')}
+    </select>` : ''}
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label class="label">تاريخ ووقت البداية</label>
+        <input name="start" type="datetime-local" value="${toLocalInput(note?.start || new Date())}" class="input" required>
+      </div>
+      <div>
+        <label class="label">تاريخ ووقت النهاية</label>
+        <input name="end" type="datetime-local" value="${toLocalInput(note?.end || new Date(Date.now() + 864e5))}" class="input" required>
+      </div>
+    </div>
+    ${recurrenceBoxHtml(note)}
+    <div class="mt-5 flex gap-2">
+      <button class="btn">${ic('check')}حفظ النوتة</button>
+      <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
+    </div>
+  </form>`;
+  showModal();
+  $('#cx').onclick = hideModal;
+  bindRecurrenceBox(m);
+  m.querySelector('form').onsubmit = guard(async e => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
     b.start = new Date(b.start).toISOString();
     b.end = new Date(b.end).toISOString();
-    if (note) return call('PUT', 'notes/' + note.id, b).then(refresh);
-    const pid = parentId ? defaultProj?.id : (b.projectId || 'personal');
-    return call('POST', 'notes', { ...b, projectId: pid, parentId: parentId || null, personal: pid === 'personal' }).then(() => {
+    b.recurDay = +b.recurDay;
+    b.tzOffsetMin = new Date().getTimezoneOffset();
+    if (note) {
+      await call('PUT', 'notes/' + note.id, b);
+    } else {
+      const pid = parentId ? defaultProj?.id : (b.projectId || 'personal');
+      await call('POST', 'notes', { ...b, projectId: pid, parentId: parentId || null, personal: pid === 'personal' });
       toast('تمت إضافة النوتة الخاصة بنجاح');
-      return refresh();
-    });
+    }
+    hideModal();
+    await refresh();
   });
 }
 
@@ -1070,6 +1236,7 @@ function alertSchedule(a) {
   return times;
 }
 function alertState(a, now = Date.now()) {
+  if (a.waitingNextCycle && a.nextSpawnAt) return { key: 'scheduled_next', label: 'مجدول للدورة القادمة', badge: 'bg-indigo-300 text-indigo-950', ring: 'border-indigo-400', fired: 0, total: 1, next: Date.parse(a.nextSpawnAt) };
   if (a.status === 'dismissed') return { key: 'dismissed', label: 'مُغلق / تم الاطلاع', badge: 'bg-slate-200 text-slate-700', ring: 'border-slate-300' };
   const times = alertSchedule(a), ev = Date.parse(a.eventAt), s = Date.parse(a.startAt || a.eventAt);
   const fired = times.filter(t => t <= now).length, next = times.find(t => t > now);
@@ -1134,15 +1301,27 @@ function alertCardHtml(a) {
   const st = alertState(a), snd = SOUNDS[a.sound] || SOUNDS.iphone;
   const times = alertSchedule(a);
   const pulse = st.key === 'due' || st.key === 'ringing';
+  const isPrivate = a.targetId === a.userId;
+  const isAll = a.targetId === 'all';
+  const scopeBadge = isAll
+    ? `<span class="inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-extrabold text-amber-200 ring-1 ring-amber-300/30">👥 عام لكل الموظفين</span>`
+    : isPrivate
+    ? `<span class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-extrabold text-teal-200 ring-1 ring-white/15">🔒 خاص بي فقط</span>`
+    : `<span class="inline-flex items-center gap-1 rounded-full bg-cyan-400/20 px-2 py-0.5 text-[10px] font-extrabold text-cyan-200 ring-1 ring-cyan-300/30">👤 موجّه لموظف</span>`;
+  const canManage = a.userId === S.me.id || S.me.role === 'admin';
   return `<article class="relative flex flex-col gap-2.5 overflow-hidden rounded-3xl border-2 ${st.ring} bg-gradient-to-br from-slate-900 via-teal-950 to-cyan-900 p-4 text-white shadow-xl transition hover:-translate-y-1 ${pulse ? 'ring-4 ring-teal-400/40' : ''}">
-    <div class="flex items-center justify-between gap-2">
-      <span class="chip ${st.badge}">${ic('bell-ring')}${st.label}</span>
+    <div class="flex flex-wrap items-center justify-between gap-1.5">
+      <div class="flex flex-wrap items-center gap-1">
+        <span class="chip ${st.badge}">${ic('bell-ring')}${st.label}</span>
+        ${recurBadge(a, true)}
+      </div>
       <button type="button" data-asnd="${a.sound || 'iphone'}" title="تجربة الصوت" class="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-teal-200 transition hover:bg-white/20">${ic('volume-2')}${esc(snd.label.replace(/^[^\s]+\s/, ''))}</button>
     </div>
 
     <div class="mt-1 flex items-start gap-2.5">
       <span class="flex h-10 w-10 flex-none items-center justify-center rounded-2xl bg-teal-400/20 text-teal-300 ring-1 ring-teal-400/30">${ic('alarm-clock', '!h-5 !w-5')}</span>
       <div class="min-w-0 flex-1">
+        <div class="mb-1 flex flex-wrap items-center gap-1">${scopeBadge}</div>
         <h4 title="${esc(a.title)}" class="clamp-2 text-base font-extrabold leading-snug text-white">${esc(a.title)}</h4>
         <div class="mt-0.5 flex items-center gap-1 truncate text-xs text-teal-200/80">${ic('user')}<span class="truncate">${esc(a.targetName)}</span>${a.userId !== a.targetId ? ` <span class="truncate opacity-70">(من: ${esc(a.createdByName)})</span>` : ''}</div>
       </div>
@@ -1154,7 +1333,8 @@ function alertCardHtml(a) {
       <div class="flex items-center justify-between"><span class="text-teal-200/70">${ic('calendar-days')}وقت التنبيه الأساسي:</span><b class="text-teal-300">${fmt(a.eventAt)}</b></div>
       <div class="flex items-center justify-between"><span class="text-teal-200/70">${ic('clock')}بدء التذكير المسبق:</span><b>${fmt(a.startAt || a.eventAt)}</b></div>
       <div class="flex items-center justify-between"><span class="text-teal-200/70">${ic('repeat')}التكرار والفاصل:</span><b>${a.repeatCount} مرات • كل ${a.intervalHours} ساعة</b></div>
-      ${a.status === 'active' ? `<div class="mt-1 flex items-center justify-between border-t border-white/10 pt-1.5 text-teal-300"><span>${ic('bell')}التذكير القادم:</span><b>${st.next ? `${fmt(st.next)} (${alertRemaining(st.next)})` : 'عند الموعد النهائي'}</b></div>` : ''}
+      ${a.waitingNextCycle && a.nextSpawnAt ? `<div class="mt-1 flex items-center justify-between border-t border-white/10 pt-1.5 text-indigo-300"><span>${ic('repeat')}يتجدد تلقائياً في:</span><b>${fmt(a.nextSpawnAt)}</b></div>`
+      : a.status === 'active' ? `<div class="mt-1 flex items-center justify-between border-t border-white/10 pt-1.5 text-teal-300"><span>${ic('bell')}التذكير القادم:</span><b>${st.next ? `${fmt(st.next)} (${alertRemaining(st.next)})` : 'عند الموعد النهائي'}</b></div>` : ''}
     </div>
 
     <!-- schedule dots -->
@@ -1164,9 +1344,9 @@ function alertCardHtml(a) {
     </div>
 
     <div class="mt-auto flex flex-wrap gap-1.5 pt-1">
-      ${a.status === 'active' ? `<button class="btn btn-sm !bg-teal-500 !text-slate-950 font-bold hover:!bg-teal-400" data-aa="dismiss:${a.id}">${ic('check')}تم الاطلاع / إيقاف</button>` : `<button class="btn btn-sm btn-ghost !bg-white/10 !text-white !ring-white/20" data-aa="reactivate:${a.id}">${ic('rotate-ccw')}إعادة تفعيل</button>`}
-      <button class="btn btn-sm btn-ghost !bg-white/10 !text-white !ring-white/20" data-aa="edit:${a.id}">${ic('pencil')}تعديل</button>
-      <button class="btn btn-sm btn-danger ms-auto" data-aa="del:${a.id}">${ic('trash-2')}</button>
+      ${a.status === 'active' && !a.waitingNextCycle ? `<button class="btn btn-sm !bg-teal-500 !text-slate-950 font-bold hover:!bg-teal-400" data-aa="dismiss:${a.id}">${ic('check')}تم الاطلاع / إيقاف</button>` : `<button class="btn btn-sm btn-ghost !bg-white/10 !text-white !ring-white/20" data-aa="reactivate:${a.id}">${ic('rotate-ccw')}إعادة تفعيل الآن</button>`}
+      ${canManage ? `<button class="btn btn-sm btn-ghost !bg-white/10 !text-white !ring-white/20" data-aa="edit:${a.id}">${ic('pencil')}تعديل</button>
+      <button class="btn btn-sm btn-danger ms-auto" data-aa="del:${a.id}">${ic('trash-2')}</button>` : ''}
     </div>
   </article>`;
 }
@@ -1175,7 +1355,10 @@ function bindAlertActions() {
   document.querySelectorAll('[data-asnd]').forEach(b => b.onclick = e => { e.stopPropagation(); playAlertSound(b.dataset.asnd); });
   document.querySelectorAll('[data-aa]').forEach(b => b.onclick = guard(async () => {
     const [act, id] = b.dataset.aa.split(':'), a = (S.data.alerts || []).find(x => x.id === id);
-    if (act === 'dismiss') { await call('POST', `alerts/${id}/dismiss`); toast('تم إيقاف التنبيه'); }
+    if (act === 'dismiss') {
+      const r = await call('POST', `alerts/${id}/dismiss`);
+      toast(r.waitingNextCycle ? `تم إيقاف تنبيه اليوم وسيتجدد تلقائياً في: ${fmt(r.nextSpawnAt)}` : 'تم إيقاف التنبيه');
+    }
     else if (act === 'reactivate') { await call('POST', `alerts/${id}/reactivate`); toast('تمت إعادة تفعيل التنبيه'); }
     else if (act === 'edit') return alertForm(a);
     else if (act === 'del') return ask({ title: 'حذف التنبيه', body: `هل تريد حذف التنبيه "${a.title}" نهائياً؟`, okText: 'حذف التنبيه', icon: 'trash-2', tone: 'danger' },
@@ -1191,11 +1374,12 @@ function alertForm(a) {
   const defEvent = a?.eventAt || new Date(now + 4 * 36e5).toISOString();
   const defStart = a?.startAt || new Date(now + 1 * 36e5).toISOString();
   const users = S.data.users || [];
-  const canAssignOthers = isMgr() && users.length > 1;
+  const canAssignOthers = isMgr();
+  const curTarget = a?.targetId || S.me.id;
   m.innerHTML = `<form class="max-h-[92vh] w-full max-w-lg overflow-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
     <div class="mb-3 flex items-center gap-2.5">
       <span class="flex h-10 w-10 items-center justify-center rounded-2xl bg-teal-600 text-white">${ic('bell-ring')}</span>
-      <div><h3 class="text-lg font-extrabold text-slate-800">${a ? 'تعديل التنبيه' : 'إضافة نوتة تنبيه جديدة'}</h3><p class="text-xs text-slate-500">حدد موعد الحدث ومتى يبدأ التذكير وعدد مرات التكرار</p></div>
+      <div><h3 class="text-lg font-extrabold text-slate-800">${a ? 'تعديل التنبيه' : 'إضافة نوتة تنبيه جديدة'}</h3><p class="text-xs text-slate-500">التنبيهات الخاصة لا تظهر لأي موظف آخر إلا إذا اخترت توجيهها لكل الموظفين</p></div>
     </div>
 
     <label class="label">عنوان التنبيه</label>
@@ -1204,11 +1388,12 @@ function alertForm(a) {
     <label class="label">تفاصيل إضافية (اختياري)</label>
     <textarea name="description" rows="2" placeholder="أي ملاحظات تظهر في نوتة التنبيه..." class="input">${esc(a?.description || '')}</textarea>
 
-    ${canAssignOthers ? `<label class="label">المستفيد من التنبيه</label>
+    ${canAssignOthers ? `<label class="label">خصوصية التنبيه والمستفيد منه</label>
     <select name="targetId" class="input">
-      <option value="${S.me.id}" ${(a?.targetId || S.me.id) === S.me.id ? 'selected' : ''}>🔔 لي شخصياً (${esc(S.me.name)})</option>
-      ${users.filter(u => u.id !== S.me.id).map(u => `<option value="${u.id}" ${a?.targetId === u.id ? 'selected' : ''}>👤 ${esc(u.name)} (${ROLE[u.role]})</option>`).join('')}
-    </select>` : ''}
+      <option value="${S.me.id}" ${curTarget === S.me.id ? 'selected' : ''}>🔒 خاص بي شخصياً فقط (${esc(S.me.name)}) — لا يظهر لغيري</option>
+      <option value="all" ${curTarget === 'all' ? 'selected' : ''}>👥 عام لكل الموظفين${S.me.role === 'manager' ? ' (في قسمي)' : ' (كل الأقسام)'}</option>
+      ${users.filter(u => u.id !== S.me.id).map(u => `<option value="${u.id}" ${curTarget === u.id ? 'selected' : ''}>👤 موظف محدد فقط: ${esc(u.name)} (${ROLE[u.role]}) — خاص به</option>`).join('')}
+    </select>` : `<div class="mt-2 rounded-xl bg-teal-50 px-3 py-2 text-xs font-bold text-teal-900 ring-1 ring-teal-200">🔒 هذا التنبيه خاص بك شخصياً ولا يظهر لأي موظف آخر.</div>`}
 
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div>
@@ -1232,6 +1417,8 @@ function alertForm(a) {
       </div>
     </div>
 
+    ${recurrenceBoxHtml(a)}
+
     <label class="label">نغمة صوت التنبيه</label>
     <div class="flex gap-2">
       <select name="sound" id="asnd-sel" class="input flex-1">
@@ -1247,6 +1434,7 @@ function alertForm(a) {
   </form>`;
   showModal();
   $('#cx').onclick = hideModal;
+  bindRecurrenceBox(m);
   $('#asnd-test').onclick = () => playAlertSound($('#asnd-sel').value);
   m.querySelector('form').onsubmit = guard(async e => {
     e.preventDefault();
@@ -1255,6 +1443,8 @@ function alertForm(a) {
     b.startAt = new Date(b.startAt).toISOString();
     b.repeatCount = +b.repeatCount;
     b.intervalHours = +b.intervalHours;
+    b.recurDay = +b.recurDay;
+    b.tzOffsetMin = new Date().getTimezoneOffset();
     await (a ? call('PUT', 'alerts/' + a.id, b) : call('POST', 'alerts', b));
     hideModal();
     playAlertSound(b.sound);
@@ -1269,7 +1459,8 @@ function checkScheduledAlerts() {
   const now = Date.now();
   let rang = false;
   for (const a of S.data.alerts) {
-    if (a.status !== 'active' || a.targetId !== S.me.id) continue;
+    if (a.status !== 'active' || a.waitingNextCycle) continue;
+    if (!(a.isTarget || a.targetId === S.me.id || a.targetId === 'all')) continue;
     const times = alertSchedule(a);
     times.forEach((t, idx) => {
       const key = `${a.id}:${idx}:${t}`;

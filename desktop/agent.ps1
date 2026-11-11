@@ -180,7 +180,9 @@ function New-NoteForm($n, $index) {
 function Update-NoteForm($f, $n) {
   $k = Get-Pri $n; $c = $COLORS[$k]
   $f.BackColor = Col $c[0]
-  $f.Tag = @{ id = $n.id; title = $n.title; desc = $n.description; project = $(if ($script:projNames[$n.projectId]) { $script:projNames[$n.projectId] } else { '—' })
+  $recTxt = if ($n.recurrence -eq 'daily') { ' • 🔄 يومية' } elseif ($n.recurrence -eq 'weekly') { ' • 📅 أسبوعية' } else { '' }
+  $projName = $(if ($script:projNames[$n.projectId]) { $script:projNames[$n.projectId] } else { '—' }) + $recTxt
+  $f.Tag = @{ id = $n.id; title = $n.title; desc = $n.description; project = $projName
     endText = (Dt $n.end); remaining = (Remaining $n); frac = (Elapsed-Fraction $n); label = $c[2]; accent = $c[3]; fg = $c[1]; glyph = $c[4] }
   $m = $f.Controls['min']; $m.BackColor = Col $c[3]; $m.ForeColor = [Drawing.Color]::White
   $b = $f.Controls['btn']; $b.Visible = ($n.status -eq 'open'); $b.Enabled = $true; $b.BackColor = Col $c[3]; $b.ForeColor = [Drawing.Color]::White
@@ -450,10 +452,20 @@ function Poll {
     }
   }
 
-  # ---- sync active alerts visible to this user ----
+  # ---- sync active alerts targeted to this user ----
   $alertMap = @{}
-  foreach ($a in @($data.alerts)) { if ($a -and $a.status -eq 'active' -and ($a.targetId -eq $script:me.id -or $a.userId -eq $script:me.id)) { $alertMap[$a.id] = $a } }
-  if ($sync -and $sync.extraAlerts) { foreach ($a in @($sync.extraAlerts)) { if ($a -and $a.status -eq 'active') { $alertMap[$a.id] = $a } } }
+  foreach ($a in @($data.alerts)) {
+    if ($a -and $a.status -eq 'active' -and -not $a.waitingNextCycle -and ($a.isTarget -or $a.targetId -eq $script:me.id -or $a.targetId -eq 'all')) {
+      $alertMap[$a.id] = $a
+    }
+  }
+  if ($sync -and $sync.extraAlerts) {
+    foreach ($a in @($sync.extraAlerts)) {
+      if ($a -and $a.status -eq 'active' -and -not $a.waitingNextCycle) {
+        $alertMap[$a.id] = $a
+      }
+    }
+  }
   $myAlerts = @($alertMap.Values)
   $aIds = @($myAlerts | ForEach-Object { $_.id })
   foreach ($id in @($aForms.Keys)) {

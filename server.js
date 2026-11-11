@@ -137,29 +137,137 @@ function ensurePersonalProject(user) {
   return p;
 }
 
+// ---------- recurrence & alert privacy helpers ----------
+function extractLocalTime(iso, tzOffsetMin = -180) {
+  const ms = (Date.parse(iso) || Date.now()) - tzOffsetMin * 60000;
+  const d = new Date(ms);
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+}
+function extractLocalDay(iso, tzOffsetMin = -180) {
+  const ms = (Date.parse(iso) || Date.now()) - tzOffsetMin * 60000;
+  return new Date(ms).getUTCDay();
+}
+function computeNextOccurrence(recurrence, recurTime, recurDay, tzOffsetMin = -180, afterMs = Date.now(), refIso = null, forceNextPeriod = false) {
+  const tz = Number.isFinite(+tzOffsetMin) ? +tzOffsetMin : -180;
+  const tStr = /^\d{1,2}:\d{2}$/.test(String(recurTime || '')) ? String(recurTime) : extractLocalTime(refIso, tz);
+  const [hh, mm] = tStr.split(':').map(x => parseInt(x, 10) || 0);
+  const localNow = afterMs - tz * 60000;
+  const d = new Date(localNow);
+  const cand = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, 0, 0));
+  if (recurrence === 'daily') {
+    if (cand.getTime() <= localNow + 30000 || forceNextPeriod) {
+      cand.setUTCDate(cand.getUTCDate() + 1);
+    }
+  } else if (recurrence === 'weekly') {
+    const defDay = extractLocalDay(refIso, tz);
+    const targetDay = (recurDay !== undefined && recurDay !== null && recurDay !== '') ? ((+recurDay % 7) + 7) % 7 : defDay;
+    let diff = (targetDay - d.getUTCDay() + 7) % 7;
+    if (diff === 0 && (cand.getTime() <= localNow + 30000 || forceNextPeriod)) diff = 7;
+    cand.setUTCDate(cand.getUTCDate() + diff);
+  }
+  return new Date(cand.getTime() + tz * 60000).toISOString();
+}
+
+function tickRecurring() {
+  if (!db) return false;
+  const now = Date.now();
+  let changed = false;
+  for (const n of (db.notes || [])) {
+    if ((n.recurrence === 'daily' || n.recurrence === 'weekly') && n.waitingNextCycle && n.nextSpawnAt) {
+      const spMs = Date.parse(n.nextSpawnAt);
+      if (now >= spMs) {
+        const dur = Math.max(3600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 86400000));
+        n.start = new Date(spMs).toISOString();
+        n.end = new Date(spMs + dur).toISOString();
+        n.status = 'open';
+        n.waitingNextCycle = false;
+        delete n.nextSpawnAt; delete n.doneAt; delete n.rejectNote;
+        n.cycleCount = (n.cycleCount || 1) + 1;
+        changed = true;
+      }
+    }
+  }
+  for (const a of (db.alerts || [])) {
+    if (a.recurrence === 'daily' || a.recurrence === 'weekly') {
+      if (a.waitingNextCycle && a.nextSpawnAt && now >= Date.parse(a.nextSpawnAt)) {
+        const leadMs = Math.max(0, +(a.leadTimeMs ?? (Date.parse(a.eventAt) - Date.parse(a.startAt || a.eventAt))) || 0);
+        const evMs = Date.parse(a.nextSpawnAt);
+        a.eventAt = new Date(evMs).toISOString();
+        a.startAt = new Date(evMs - leadMs).toISOString();
+        a.status = 'active';
+        a.waitingNextCycle = false;
+        a.dismissedBy = [];
+        delete a.nextSpawnAt; delete a.dismissedAt;
+        a.cycleCount = (a.cycleCount || 1) + 1;
+        changed = true;
+      }
+    }
+  }
+  if (changed) save();
+  return changed;
+}
+setInterval(tickRecurring, 15000);
+
+function isAlertTarget(user, a) {
+  if (!user || !a) return false;
+  if (a.targetId === 'all') {
+    return !a.deptId || user.role === 'admin' || user.deptId === a.deptId;
+  }
+  return a.targetId === user.id;
+}
+function canSeeAlert(user, a) {
+  if (!user || !a) return false;
+  if (isAlertTarget(user, a)) return true;
+  if (a.userId === user.id) return true;
+  return false;
+}
+function formatAlertForUser(a, user) {
+  let targetName = '—';
+  if (a.targetId === 'all') {
+    const dName = a.deptId ? (byId(db.departments, a.deptId) || {}).name : null;
+    targetName = dName ? `كل موظفي قسم (${dName})` : 'كل الموظفين (عام)';
+  } else {
+    targetName = (byId(db.users, a.targetId) || {}).name || '—';
+  }
+  const dismissedByMe = Array.isArray(a.dismissedBy) && user ? a.dismissedBy.includes(user.id) : false;
+  const effectiveStatus = (a.waitingNextCycle || dismissedByMe) ? 'dismissed' : a.status;
+  return {
+    ...a,
+    status: effectiveStatus,
+    rawStatus: a.status,
+    dismissedByMe,
+    isTarget: isAlertTarget(user, a),
+    targetName,
+    createdByName: (byId(db.users, a.userId) || {}).name || '—',
+  };
+}
+
 function visibleData(user) {
-  let departments, projects, notes, users;
+  tickRecurring();
+  let departments, projects, allNotes, users;
   const canSeeProj = p => !p.archived && (!p.personal || p.ownerId === user.id);
   if (user.role === 'admin') {
     departments = db.departments;
     projects = db.projects.filter(canSeeProj);
     const pids = new Set(projects.map(p => p.id));
-    notes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
+    allNotes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
     users = db.users;
   } else if (user.role === 'manager') {
     departments = db.departments.filter(d => d.id === user.deptId);
     projects = db.projects.filter(p => (p.deptId === user.deptId || p.ownerId === user.id) && canSeeProj(p));
     const pids = new Set(projects.map(p => p.id));
-    notes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
+    allNotes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
     users = db.users.filter(u => u.deptId === user.deptId || u.id === user.id);
   } else { // employee: own assigned notes + own personal notes
-    notes = db.notes.filter(n => n.assigneeId === user.id || n.createdBy === user.id);
-    const pids = new Set(notes.map(n => n.projectId));
+    allNotes = db.notes.filter(n => n.assigneeId === user.id || n.createdBy === user.id);
+    const pids = new Set(allNotes.map(n => n.projectId));
     projects = db.projects.filter(p => !p.archived && (pids.has(p.id) || p.ownerId === user.id));
     const dids = new Set(projects.map(p => p.deptId).concat(user.deptId ? [user.deptId] : []));
     departments = db.departments.filter(d => dids.has(d.id));
     users = db.users.filter(u => u.id === user.id || u.id === user.managerId);
   }
+  const notes = allNotes.filter(n => !n.waitingNextCycle);
+  const scheduledNotes = allNotes.filter(n => n.waitingNextCycle);
   // finished (confirmed) notes, with full details for the detail modal
   const pids = new Set(projects.map(p => p.id));
   const done = db.history.filter(h => pids.has(h.projectId) && (user.role !== 'employee' || h.assigneeId === user.id))
@@ -171,10 +279,9 @@ function visibleData(user) {
     })
     .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt));
   if (user.role === 'manager' || user.role === 'admin') users = users.concat(db.users.filter(u => done.some(d => d.assigneeId === u.id) && !users.includes(u)));
-  const alerts = (db.alerts || []).filter(a => a.targetId === user.id || a.userId === user.id).map(a => ({
-    ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
-  })).sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt));
-  return { v: stateVersion, codeVer: CODE_VER, departments, projects, notes, done, alerts, users: users.map(pub) };
+  const alerts = (db.alerts || []).filter(a => canSeeAlert(user, a)).map(a => formatAlertForUser(a, user))
+    .sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt));
+  return { v: stateVersion, codeVer: CODE_VER, departments, projects, notes, scheduledNotes, done, alerts, users: users.map(pub) };
 }
 
 function validateDates(start, end) {
@@ -372,9 +479,16 @@ function api(req, method, url, body, user) {
 
   // --- notes ---
   if (res === 'notes') {
+    const parseRec = (b, cur, s, e) => {
+      const rec = ['once', 'daily', 'weekly'].includes(b.recurrence ?? cur?.recurrence) ? (b.recurrence ?? cur?.recurrence) : 'once';
+      const tz = Number.isFinite(+(b.tzOffsetMin ?? cur?.tzOffsetMin)) ? +(b.tzOffsetMin ?? cur?.tzOffsetMin) : -180;
+      const rTime = b.recurTime || cur?.recurTime || extractLocalTime(s, tz);
+      const rDay = (b.recurDay !== undefined && b.recurDay !== '') ? +b.recurDay : (cur?.recurDay ?? extractLocalDay(s, tz));
+      const durMs = Math.max(3600000, Date.parse(e) - Date.parse(s));
+      return { recurrence: rec, recurTime: rTime, recurDay: rDay, recurDurationMs: durMs, tzOffsetMin: tz };
+    };
     if (method === 'POST' && !id) {
       validateDates(body.start, body.end);
-      const isPersonalReq = body.personal || body.projectId === 'personal' || !body.projectId || user.role === 'employee';
       let p, assigneeId, isPersonal = false;
       if (body.personal || body.projectId === 'personal' || !body.projectId) {
         p = ensurePersonalProject(user);
@@ -397,37 +511,70 @@ function api(req, method, url, body, user) {
         }
       }
       if (body.parentId) { const par = byId(db.notes, body.parentId); if (!par || par.projectId !== p.id) fail(400, 'النوتة الأم غير صحيحة'); }
+      const recCfg = parseRec(body, null, body.start, body.end);
       const n = { id: uid(), projectId: p.id, parentId: body.parentId || null, title: body.title || 'بدون عنوان',
         description: body.description || '', start: body.start, end: body.end, assigneeId,
-        createdBy: user.id, personal: isPersonal, status: 'open', createdAt: new Date().toISOString() };
+        createdBy: user.id, personal: isPersonal, status: 'open', createdAt: new Date().toISOString(),
+        ...recCfg, cycleCount: 1 };
       db.notes.push(n); save(); return n;
     }
     const n = byId(db.notes, id); if (!n) fail(404, 'النوتة غير موجودة');
     const deptId = noteDeptId(n);
     const isOwnNote = (n.personal || n.createdBy === user.id) && n.assigneeId === user.id;
 
+    const completeOrScheduleNext = (confirmedByUserId, doneAtIso) => {
+      const now = new Date().toISOString();
+      const isRecurring = n.recurrence === 'daily' || n.recurrence === 'weekly';
+      db.history.push({
+        ...n,
+        id: isRecurring ? uid() : n.id,
+        sourceNoteId: n.id,
+        doneAt: doneAtIso || now,
+        confirmedBy: confirmedByUserId,
+        confirmedAt: now,
+      });
+      if (isRecurring) {
+        const nextSpawnAt = computeNextOccurrence(n.recurrence, n.recurTime, n.recurDay, n.tzOffsetMin, Date.now(), n.start, true);
+        n.waitingNextCycle = true;
+        n.nextSpawnAt = nextSpawnAt;
+        n.status = 'open';
+        n.lastCompletedAt = now;
+        delete n.doneAt;
+        delete n.rejectNote;
+        save();
+        return { ok: true, removed: n.id, autoConfirmed: isOwnNote, recurringNextAt: nextSpawnAt };
+      }
+      db.notes.forEach(c => { if (c.parentId === n.id) c.parentId = n.parentId; });
+      db.notes = db.notes.filter(x => x.id !== n.id);
+      save();
+      return { ok: true, removed: n.id, autoConfirmed: isOwnNote };
+    };
+
     if (action === 'done' && method === 'POST') {
       if (n.assigneeId !== user.id) fail(403, 'هذه النوتة ليست لك');
       if (n.status !== 'open') fail(400, 'الحالة لا تسمح');
       const now = new Date().toISOString();
       if (isOwnNote) {
-        // personal note created by the user themselves -> complete directly without needing manager approval
-        db.notes.forEach(c => { if (c.parentId === n.id) c.parentId = n.parentId; });
-        db.notes = db.notes.filter(x => x.id !== n.id);
-        db.history.push({ ...n, doneAt: now, confirmedBy: user.id, confirmedAt: now });
-        save(); return { ok: true, removed: n.id, autoConfirmed: true };
+        return completeOrScheduleNext(user.id, now);
       }
       n.status = 'pending'; n.doneAt = now; save(); return n;
     }
     if (action === 'confirm' && method === 'POST') {
       if (!canConfirm(user, n) && !isOwnNote) fail(403, 'التأكيد للمدير المباشر للموظف فقط');
       if (n.status !== 'pending' && !isOwnNote) fail(400, 'النوتة لم تُنجز بعد');
-      // remove from the tree (children are re-attached to the parent), keep an archive record
-      db.notes.forEach(c => { if (c.parentId === n.id) c.parentId = n.parentId; });
-      db.notes = db.notes.filter(x => x.id !== n.id);
-      const now = new Date().toISOString();
-      db.history.push({ ...n, doneAt: n.doneAt || now, confirmedBy: user.id, confirmedAt: now });
-      save(); return { ok: true, removed: n.id };
+      return completeOrScheduleNext(user.id, n.doneAt);
+    }
+    if (action === 'spawn-now' && method === 'POST') {
+      if (!canManageDept(user, deptId) && !isOwnNote && n.assigneeId !== user.id) fail(403, 'غير مسموح');
+      const dur = Math.max(3600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 86400000));
+      const nowMs = Date.now();
+      n.start = new Date(nowMs).toISOString();
+      n.end = new Date(nowMs + dur).toISOString();
+      n.status = 'open';
+      n.waitingNextCycle = false;
+      delete n.nextSpawnAt; delete n.doneAt; delete n.rejectNote;
+      n.cycleCount = (n.cycleCount || 1) + 1;
+      save(); return n;
     }
     if (action === 'reject' && method === 'POST') {
       if (!canConfirm(user, n)) fail(403, 'غير مسموح');
@@ -438,8 +585,16 @@ function api(req, method, url, body, user) {
     if (method === 'PUT') {
       const s = body.start ?? n.start, e = body.end ?? n.end; validateDates(s, e);
       if (body.assigneeId && !isOwnNote) validateAssignee(user, body.assigneeId, deptId);
+      const recCfg = parseRec(body, n, s, e);
       Object.assign(n, { title: body.title ?? n.title, description: body.description ?? n.description,
-        start: s, end: e, assigneeId: isOwnNote ? user.id : (body.assigneeId || n.assigneeId) });
+        start: s, end: e, assigneeId: isOwnNote ? user.id : (body.assigneeId || n.assigneeId),
+        ...recCfg });
+      if (n.waitingNextCycle && (n.recurrence === 'daily' || n.recurrence === 'weekly')) {
+        n.nextSpawnAt = computeNextOccurrence(n.recurrence, n.recurTime, n.recurDay, n.tzOffsetMin, Date.now(), n.start, false);
+      } else if (n.recurrence === 'once') {
+        n.waitingNextCycle = false;
+        delete n.nextSpawnAt;
+      }
       save(); return n;
     }
     if (method === 'DELETE') {
@@ -458,37 +613,85 @@ function api(req, method, url, body, user) {
       const cnt = Math.max(1, Math.min(50, +(b.repeatCount ?? cur?.repeatCount ?? 1) || 1));
       const hrs = Math.max(0.05, +(b.intervalHours ?? cur?.intervalHours ?? 1) || 1);
       let tid = b.targetId || cur?.targetId || user.id;
-      if (tid !== user.id) {
+      let alertDeptId = cur?.deptId || null;
+      if (tid === 'all') {
+        if (user.role === 'employee') fail(403, 'لا يمكنك إرسال تنبيه عام لكل الموظفين');
+        alertDeptId = user.role === 'manager' ? user.deptId : (b.deptId || null);
+      } else if (tid !== user.id) {
         const tUser = byId(db.users, tid);
         if (!tUser) fail(400, 'المستخدم غير موجود');
         if (user.role === 'employee') fail(403, 'لا يمكنك إسناد تنبيه لمستخدم آخر');
         if (user.role === 'manager' && tUser.deptId !== user.deptId) fail(403, 'المستخدم ليس في قسمك');
+        alertDeptId = tUser.deptId || null;
+      } else {
+        alertDeptId = null;
       }
-      return { eventAt: ev, startAt: st, repeatCount: cnt, intervalHours: hrs, targetId: tid };
+      const rec = ['once', 'daily', 'weekly'].includes(b.recurrence ?? cur?.recurrence) ? (b.recurrence ?? cur?.recurrence) : 'once';
+      const tz = Number.isFinite(+(b.tzOffsetMin ?? cur?.tzOffsetMin)) ? +(b.tzOffsetMin ?? cur?.tzOffsetMin) : -180;
+      const rTime = b.recurTime || cur?.recurTime || extractLocalTime(ev, tz);
+      const rDay = (b.recurDay !== undefined && b.recurDay !== '') ? +b.recurDay : (cur?.recurDay ?? extractLocalDay(ev, tz));
+      const leadTimeMs = Math.max(0, Date.parse(ev) - Date.parse(st));
+      return {
+        eventAt: ev, startAt: st, repeatCount: cnt, intervalHours: hrs,
+        targetId: tid, deptId: alertDeptId,
+        recurrence: rec, recurTime: rTime, recurDay: rDay, tzOffsetMin: tz, leadTimeMs,
+      };
     };
     if (method === 'POST' && !id) {
       if (!body.title) fail(400, 'عنوان التنبيه مطلوب');
       const v = checkAlert(body, null);
-      const a = { id: uid(), userId: user.id, targetId: v.targetId, title: body.title, description: body.description || '',
+      const a = { id: uid(), userId: user.id, targetId: v.targetId, deptId: v.deptId,
+        title: body.title, description: body.description || '',
         eventAt: v.eventAt, startAt: v.startAt, repeatCount: v.repeatCount, intervalHours: v.intervalHours,
-        sound: body.sound || 'iphone', status: 'active', createdAt: new Date().toISOString() };
-      db.alerts.push(a); save(); return a;
+        recurrence: v.recurrence, recurTime: v.recurTime, recurDay: v.recurDay, tzOffsetMin: v.tzOffsetMin, leadTimeMs: v.leadTimeMs,
+        sound: body.sound || 'iphone', status: 'active', dismissedBy: [], createdAt: new Date().toISOString() };
+      db.alerts.push(a); save(); return formatAlertForUser(a, user);
     }
     const a = byId(db.alerts, id); if (!a) fail(404, 'التنبيه غير موجود');
     const isLocalDesktop = req.headers['x-client'] === 'desktop' && ['127.0.0.1', '::1'].includes((req.socket.remoteAddress || '').replace('::ffff:', ''));
-    if (a.userId !== user.id && a.targetId !== user.id && user.role !== 'admin' && !isLocalDesktop) fail(403, 'غير مسموح');
+    if (!canSeeAlert(user, a) && user.role !== 'admin' && !isLocalDesktop) fail(403, 'غير مسموح');
     if (action === 'dismiss' && method === 'POST') {
-      a.status = 'dismissed'; a.dismissedAt = new Date().toISOString(); save(); return a;
+      if (a.targetId === 'all' && user.id !== a.userId && user.role !== 'admin') {
+        if (!Array.isArray(a.dismissedBy)) a.dismissedBy = [];
+        if (!a.dismissedBy.includes(user.id)) a.dismissedBy.push(user.id);
+        save();
+        return formatAlertForUser(a, user);
+      }
+      if (a.recurrence === 'daily' || a.recurrence === 'weekly') {
+        const nextSpawnAt = computeNextOccurrence(a.recurrence, a.recurTime, a.recurDay, a.tzOffsetMin, Date.now(), a.eventAt, true);
+        a.waitingNextCycle = true;
+        a.nextSpawnAt = nextSpawnAt;
+        a.status = 'active';
+        a.dismissedBy = [];
+        a.lastDismissedAt = new Date().toISOString();
+        save();
+        return formatAlertForUser(a, user);
+      }
+      a.status = 'dismissed'; a.dismissedAt = new Date().toISOString(); save(); return formatAlertForUser(a, user);
     }
     if (action === 'reactivate' && method === 'POST') {
-      a.status = 'active'; delete a.dismissedAt; save(); return a;
+      if (Array.isArray(a.dismissedBy)) a.dismissedBy = a.dismissedBy.filter(uid => uid !== user.id);
+      if (a.waitingNextCycle) {
+        const leadMs = Math.max(0, +(a.leadTimeMs ?? (Date.parse(a.eventAt) - Date.parse(a.startAt || a.eventAt))) || 0);
+        const evMs = Date.parse(a.nextSpawnAt || a.eventAt);
+        if (evMs > Date.now()) {
+          a.eventAt = new Date(evMs).toISOString();
+          a.startAt = new Date(evMs - leadMs).toISOString();
+        }
+        a.waitingNextCycle = false;
+        delete a.nextSpawnAt;
+      }
+      a.status = 'active'; delete a.dismissedAt; save(); return formatAlertForUser(a, user);
     }
+    if (a.userId !== user.id && user.role !== 'admin') fail(403, 'التعديل لصاحب التنبيه أو المدير العام فقط');
     if (method === 'PUT') {
       const v = checkAlert(body, a);
       Object.assign(a, { title: body.title ?? a.title, description: body.description ?? a.description,
         eventAt: v.eventAt, startAt: v.startAt, repeatCount: v.repeatCount, intervalHours: v.intervalHours,
-        targetId: v.targetId, sound: body.sound || a.sound });
-      save(); return a;
+        targetId: v.targetId, deptId: v.deptId, sound: body.sound || a.sound,
+        recurrence: v.recurrence, recurTime: v.recurTime, recurDay: v.recurDay, tzOffsetMin: v.tzOffsetMin, leadTimeMs: v.leadTimeMs });
+      if (v.recurrence === 'once') { a.waitingNextCycle = false; delete a.nextSpawnAt; }
+      save(); return formatAlertForUser(a, user);
     }
     if (method === 'DELETE') {
       db.alerts = db.alerts.filter(x => x.id !== id); save(); return { ok: true };
@@ -593,15 +796,16 @@ init().then(() => http.createServer((req, res) => {
           lastActiveByIp.set(ip, token);
         }
         if (url === '/api/desktop-sync' && req.method === 'GET') {
+          tickRecurring();
           const qs = new URL(req.url, 'http://localhost').searchParams;
           const byName = qs.get('username') && db.users.find(x => x.username === qs.get('username'));
           const ipToken = lastActiveByIp.get(ip) || lastActiveToken;
           const webUser = byId(db.users, verifyToken(ipToken));
           const empUser = db.users.find(x => x.role === 'employee');
           const u = webUser || user || byName || empUser || db.users[0];
-          const activeAlerts = (db.alerts || []).filter(a => a.status === 'active').map(a => ({
-            ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
-          }));
+          const activeAlerts = (db.alerts || [])
+            .filter(a => a.status === 'active' && !a.waitingNextCycle && isAlertTarget(u, a) && !(Array.isArray(a.dismissedBy) && a.dismissedBy.includes(u.id)))
+            .map(a => formatAlertForUser(a, u));
           res.writeHead(200, headers);
           return res.end(JSON.stringify({
             token: makeToken(u.id),
