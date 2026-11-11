@@ -244,6 +244,14 @@ function api(req, method, url, body, user) {
     return db.devices.map(d => ({ ...d, userName: (byId(db.users, d.userId) || {}).name || '—' })).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
   }
   if (res === 'me') return pub(user);
+  if (res === 'password' && (method === 'POST' || method === 'PUT')) {
+    if (!verify(String(body.currentPassword || ''), user.password)) fail(400, 'كلمة المرور الحالية غير صحيحة');
+    const np = String(body.newPassword || '');
+    if (np.length < 4) fail(400, 'كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل');
+    user.password = hash(np);
+    save();
+    return { ok: true, token: makeToken(user.id), user: pub(user) };
+  }
   if (res === 'data' && method === 'GET') return visibleData(user);
   if (res === 'history' && method === 'GET') {
     const list = db.history.filter(h => {

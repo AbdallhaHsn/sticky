@@ -1,4 +1,4 @@
-﻿# Run once on the employee's PC (or double-click install.bat).
+# Run once on the employee's PC (or double-click install.bat).
 # Verifies the login against the server, saves it, copies agent files to %APPDATA%\StickyAgent,
 # registers autostart, and starts the agent.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

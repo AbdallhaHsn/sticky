@@ -350,12 +350,57 @@ function render(silent = false) {
     <a href="/api/desktop-setup?token=${encodeURIComponent(S.token || '')}" title="تحميل أداة إظهار نوتاتك وتنبيهاتك على سطح المكتب لجهازك" class="flex items-center gap-1.5 rounded-full bg-amber-300 px-3 py-1 text-xs font-extrabold text-amber-950 shadow-sm transition hover:bg-amber-200">${ic('monitor')}ربط سطح المكتب</a>
     <div class="flex items-center gap-2 rounded-full bg-white/10 py-1 pe-3 ps-1 text-sm"><span class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-500">${ic('user')}</span>
       <span>${esc(S.me.name)}</span><span class="chip bg-white/20 text-indigo-100">${ROLE[S.me.role]}${S.me.deptId ? ' • ' + esc(deptName(S.me.deptId)) : ''}</span></div>
+    <button id="chpw" title="تغيير كلمة المرور" class="btn btn-ghost btn-sm">${ic('key-round')}كلمة المرور</button>
     <button id="lo" class="btn btn-ghost btn-sm">${ic('log-out')}خروج</button></header>
     <div id="body"></div>`;
+  $('#chpw').onclick = () => passwordForm();
   $('#lo').onclick = () => logout();
   document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { S.tab = b.dataset.t; render(); });
   ({ admin: S.me.role === 'admin' ? adminView : boardView, history: historyView, tree: treeView, alerts: alertsView }[S.tab] || boardView)(silent);
   restoreUiState(uiState);
+}
+
+function passwordForm() {
+  S.detailNoteId = null;
+  const m = $('#modal');
+  m.innerHTML = `<form class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+    <div class="mb-3 flex items-center gap-2.5">
+      <span class="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-600 text-white">${ic('key-round')}</span>
+      <div>
+        <h3 class="text-lg font-extrabold text-slate-800">تغيير كلمة المرور</h3>
+        <p class="text-xs text-slate-500">تحديث كلمة المرور الخاصة بحسابك (${esc(S.me.name)})</p>
+      </div>
+    </div>
+    <label class="label">كلمة المرور الحالية</label>
+    <input name="currentPassword" type="password" autocomplete="current-password" class="input" required autofocus>
+    <label class="label">كلمة المرور الجديدة</label>
+    <input name="newPassword" type="password" autocomplete="new-password" minlength="4" placeholder="4 أحرف أو أرقام على الأقل" class="input" required>
+    <label class="label">تأكيد كلمة المرور الجديدة</label>
+    <input name="confirmPassword" type="password" autocomplete="new-password" minlength="4" class="input" required>
+    <div id="pwe" class="mt-2 min-h-5 text-xs font-bold text-rose-600"></div>
+    <div class="mt-4 flex gap-2">
+      <button class="btn">${ic('check')}حفظ كلمة المرور</button>
+      <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
+    </div>
+  </form>`;
+  showModal();
+  $('#cx').onclick = hideModal;
+  m.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target));
+    if (b.newPassword !== b.confirmPassword) {
+      $('#pwe').textContent = 'كلمة المرور الجديدة وتأكيدها غير متطابقين';
+      return;
+    }
+    try {
+      const r = await call('POST', 'password', { currentPassword: b.currentPassword, newPassword: b.newPassword });
+      saveAccountCreds(S.me.username, b.newPassword, r.user || S.me, r.token || S.token);
+      hideModal();
+      toast('تم تغيير كلمة المرور بنجاح');
+    } catch (err) {
+      $('#pwe').textContent = err.message;
+    }
+  };
 }
 
 // ---------- sidebar tree (board page) ----------

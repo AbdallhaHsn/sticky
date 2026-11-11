@@ -8,7 +8,7 @@ for (const w of [400, 500, 700, 800])
 const ICONS = ['sticky-note', 'log-out', 'layout-grid', 'git-fork', 'archive', 'users', 'building-2', 'folder', 'folder-plus', 'plus', 'pencil', 'trash-2',
   'check', 'check-check', 'undo-2', 'clock', 'calendar-days', 'user', 'triangle-alert', 'flame', 'hourglass', 'monitor', 'globe', 'chevron-down', 'chevron-left',
   'chevron-right', 'search', 'filter', 'rotate-ccw', 'arrow-up-down', 'bell-ring', 'volume-2', 'repeat', 'alarm-clock', 'sparkles',
-  'x', 'bell', 'list-checks', 'corner-down-left', 'inbox', 'shield-check', 'timer-off', 'rocket', 'leaf', 'zap'];
+  'x', 'bell', 'list-checks', 'corner-down-left', 'inbox', 'shield-check', 'timer-off', 'rocket', 'leaf', 'zap', 'key-round'];
 const map = {};
 for (const n of ICONS) {
   const svg = fs.readFileSync(path.join(root, 'node_modules/lucide-static/icons', n + '.svg'), 'utf8');

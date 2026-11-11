@@ -1,4 +1,4 @@
-﻿# Smart Sticky Notes - Windows desktop agent
+# Smart Sticky Notes - Windows desktop agent
 # Logs in as the employee, registers this device, and shows each assigned note as a sticky note on the desktop.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace Win -Name Native -MemberDefinition @'
