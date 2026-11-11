@@ -1,4 +1,4 @@
-# Smart Sticky Notes - Windows desktop agent
+﻿# Smart Sticky Notes - Windows desktop agent
 # Logs in as the employee, registers this device, and shows each assigned note as a sticky note on the desktop.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace Win -Name Native -MemberDefinition @'
@@ -419,13 +419,20 @@ $tray.Add_DoubleClick({
 
 function Poll {
   try {
+    $sync = try { Api 'GET' "desktop-sync?username=$([Uri]::EscapeDataString($cfg.username))" $null } catch { $null }
+    if ($sync -and $sync.webToken -and $sync.webUser) {
+      if ($script:token -ne $sync.webToken -or -not $script:me -or $script:me.id -ne $sync.webUser.id) {
+        $script:token = $sync.webToken
+        $script:me = $sync.webUser
+        Log "switched desktop session to active web user $($script:me.name)"
+      }
+    }
     if (-not $script:token -or -not $script:me) { Login }
     try { $data = Api 'GET' 'data' $null } catch { Login; $data = Api 'GET' 'data' $null }
-    $sync = try { Api 'GET' 'desktop-sync' $null } catch { $null }
   } catch { Log "poll failed: $($_.Exception.Message)"; return }
-  # show open and pending notes on desktop so the employee always sees their tasks until confirmed by manager
+  # show open and pending notes on desktop so the user sees their visible tasks
   $script:projNames = @{}; foreach ($pr in $data.projects) { $script:projNames[$pr.id] = $pr.name }
-  $mine = @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id })
+  $mine = if ($script:me.role -eq 'employee') { @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id }) } else { @($data.notes) }
   $ids = @($mine | ForEach-Object { $_.id })
   foreach ($id in @($forms.Keys)) {           # note confirmed/removed -> take it off the desktop
     if ($ids -notcontains $id) { $forms[$id].Close(); $forms[$id].Dispose(); $forms.Remove($id); $dots[$id].Close(); $dots[$id].Dispose(); $dots.Remove($id); Layout-Dots }
@@ -443,10 +450,10 @@ function Poll {
     }
   }
 
-  # ---- sync active alerts targeted to this user ----
+  # ---- sync active alerts visible to this user ----
   $alertMap = @{}
-  foreach ($a in @($data.alerts)) { if ($a -and $a.status -eq 'active' -and $a.targetId -eq $script:me.id) { $alertMap[$a.id] = $a } }
-  if ($sync -and $sync.extraAlerts) { foreach ($a in @($sync.extraAlerts)) { if ($a -and $a.status -eq 'active' -and $a.targetId -eq $script:me.id) { $alertMap[$a.id] = $a } } }
+  foreach ($a in @($data.alerts)) { if ($a -and $a.status -eq 'active' -and ($a.targetId -eq $script:me.id -or $a.userId -eq $script:me.id)) { $alertMap[$a.id] = $a } }
+  if ($sync -and $sync.extraAlerts) { foreach ($a in @($sync.extraAlerts)) { if ($a -and $a.status -eq 'active') { $alertMap[$a.id] = $a } } }
   $myAlerts = @($alertMap.Values)
   $aIds = @($myAlerts | ForEach-Object { $_.id })
   foreach ($id in @($aForms.Keys)) {

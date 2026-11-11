@@ -92,6 +92,10 @@ function save() {
 }
 const SECRET = crypto.createHash('sha256').update(DB_FILE + ':sticky-secret').digest();
 let lastActiveToken = null;
+const lastActiveByIp = new Map();
+function clientIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().replace('::ffff:', '');
+}
 function makeToken(userId) {
   const sig = crypto.createHmac('sha256', SECRET).update(userId).digest('hex').slice(0, 32);
   return `${userId}.${sig}`;
@@ -500,7 +504,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 
 init().then(() => http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
-  if (url === '/api/desktop-setup' && req.method === 'GET') {
+  if ((url === '/api/desktop-setup' || url === '/api/desktop-setup.ps1') && req.method === 'GET') {
     const qs = new URL(req.url, 'http://localhost').searchParams;
     const tk = qs.get('token') || (req.headers.authorization || '').replace('Bearer ', '') || parseCookieToken(req);
     const u = byId(db.users, verifyToken(tk));
@@ -509,23 +513,41 @@ init().then(() => http.createServer((req, res) => {
     const host = req.headers['x-forwarded-host'] || req.headers.host || 'sticky.abdallaswe.tech';
     const srv = `${proto}://${host}`;
     const userToken = makeToken(u.id);
+    if (url === '/api/desktop-setup.ps1') {
+      const cfgB64 = Buffer.from(JSON.stringify({ server: srv, username: u.username, token: userToken }), 'utf8').toString('base64');
+      const ps1 = [
+        `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`,
+        `$d = Join-Path $env:APPDATA 'StickyAgent'`,
+        `$f = Join-Path $d 'fonts'`,
+        `New-Item -ItemType Directory -Force $d | Out-Null`,
+        `New-Item -ItemType Directory -Force $f | Out-Null`,
+        `$agPath = Join-Path $d 'agent.ps1'`,
+        `Invoke-WebRequest -Uri '${srv}/desktop/agent.ps1' -OutFile $agPath -UseBasicParsing`,
+        `$b = [System.IO.File]::ReadAllBytes($agPath)`,
+        `if ($b.Length -lt 3 -or $b[0] -ne 0xEF -or $b[1] -ne 0xBB -or $b[2] -ne 0xBF) {`,
+        `  [System.IO.File]::WriteAllBytes($agPath, ([byte[]](0xEF,0xBB,0xBF) + $b))`,
+        `}`,
+        `foreach ($fn in 'Tajawal-Regular.ttf','Tajawal-Medium.ttf','Tajawal-Bold.ttf') {`,
+        `  try { Invoke-WebRequest -Uri ('${srv}/desktop/fonts/' + $fn) -OutFile (Join-Path $f $fn) -UseBasicParsing } catch {}`,
+        `}`,
+        `[System.IO.File]::WriteAllBytes((Join-Path $d 'config.json'), [Convert]::FromBase64String('${cfgB64}'))`,
+        `$cmd = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $agPath + '"'`,
+        `$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'StickyNotesAgent.lnk'`,
+        `$s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)`,
+        `$s.TargetPath = 'powershell.exe'; $s.Arguments = $cmd; $s.WorkingDirectory = $d; $s.WindowStyle = 7; $s.Save()`,
+        `Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*agent.ps1*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+        `Start-Process powershell.exe -WindowStyle Hidden -ArgumentList $cmd`,
+        `Write-Host 'Done! Sticky Notes Desktop Agent is now active on your desktop.' -ForegroundColor Green`,
+      ].join('\r\n');
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(ps1, 'utf8')]));
+    }
     const bat = [
       '@echo off',
       'chcp 65001 >nul',
       'echo Configuring Smart Sticky Notes Desktop Agent for ' + u.username + '...',
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "` +
-        `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; ` +
-        `$d = Join-Path $env:APPDATA 'StickyAgent'; $f = Join-Path $d 'fonts'; ` +
-        `New-Item -ItemType Directory -Force $d | Out-Null; New-Item -ItemType Directory -Force $f | Out-Null; ` +
-        `Invoke-WebRequest -Uri '${srv}/desktop/agent.ps1' -OutFile (Join-Path $d 'agent.ps1') -UseBasicParsing; ` +
-        `foreach ($fn in 'Tajawal-Regular.ttf','Tajawal-Medium.ttf','Tajawal-Bold.ttf') { try { Invoke-WebRequest -Uri ('${srv}/desktop/fonts/' + $fn) -OutFile (Join-Path $f $fn) -UseBasicParsing } catch {} }; ` +
-        `@{ server = '${srv}'; username = '${u.username}'; token = '${userToken}' } | ConvertTo-Json | Set-Content (Join-Path $d 'config.json') -Encoding UTF8; ` +
-        `$ag = Join-Path $d 'agent.ps1'; $cmd = '-WindowStyle Hidden -ExecutionPolicy Bypass -File \\"' + $ag + '\\"'; ` +
-        `$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'StickyNotesAgent.lnk'; ` +
-        `$s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $s.TargetPath = 'powershell.exe'; $s.Arguments = $cmd; $s.WorkingDirectory = $d; $s.WindowStyle = 7; $s.Save(); ` +
-        `Get-CimInstance Win32_Process -Filter \\"Name='powershell.exe'\\" | Where-Object { $_.CommandLine -like '*agent.ps1*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; ` +
-        `Start-Process powershell.exe -ArgumentList $cmd; Write-Host 'Done! Sticky Notes Desktop Agent is now active on your desktop.' -ForegroundColor Green"`,
-      'timeout /t 3 >nul',
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression (Invoke-RestMethod -Uri '${srv}/api/desktop-setup.ps1?token=${encodeURIComponent(userToken)}' -UseBasicParsing)"`,
+      'timeout /t 2 >nul',
     ].join('\r\n');
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
@@ -538,6 +560,9 @@ init().then(() => http.createServer((req, res) => {
     const tk = qs.get('token') || (req.headers.authorization || '').replace('Bearer ', '') || parseCookieToken(req);
     const u = byId(db.users, verifyToken(tk));
     if (!u) { res.writeHead(401); return res.end(); }
+    const tok = makeToken(u.id);
+    lastActiveToken = tok;
+    lastActiveByIp.set(clientIp(req), tok);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -562,21 +587,29 @@ init().then(() => http.createServer((req, res) => {
         const uidFromToken = verifyToken(hdrToken) || verifyToken(cookieToken);
         const token = verifyToken(hdrToken) ? hdrToken : cookieToken;
         const user = byId(db.users, uidFromToken);
-        if (user && req.headers['x-client'] !== 'desktop') lastActiveToken = token;
+        const ip = clientIp(req);
+        if (user && req.headers['x-client'] !== 'desktop') {
+          lastActiveToken = token;
+          lastActiveByIp.set(ip, token);
+        }
         if (url === '/api/desktop-sync' && req.method === 'GET') {
-          const ip = (req.socket.remoteAddress || '').replace('::ffff:', '');
-          if (user || ip === '127.0.0.1' || ip === '::1') {
-            const qs = new URL(req.url, 'http://localhost').searchParams;
-            const byName = qs.get('username') && db.users.find(x => x.username === qs.get('username'));
-            const webUser = byId(db.users, verifyToken(lastActiveToken));
-            const empUser = db.users.find(x => x.role === 'employee');
-            const u = user || byName || webUser || empUser || db.users[0];
-            const activeAlerts = (db.alerts || []).filter(a => a.status === 'active' && a.targetId === u.id).map(a => ({
-              ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
-            }));
-            res.writeHead(200, headers);
-            return res.end(JSON.stringify({ token: makeToken(u.id), user: pub(u), webUser: webUser ? pub(webUser) : null, extraAlerts: activeAlerts }));
-          }
+          const qs = new URL(req.url, 'http://localhost').searchParams;
+          const byName = qs.get('username') && db.users.find(x => x.username === qs.get('username'));
+          const ipToken = lastActiveByIp.get(ip) || lastActiveToken;
+          const webUser = byId(db.users, verifyToken(ipToken));
+          const empUser = db.users.find(x => x.role === 'employee');
+          const u = webUser || user || byName || empUser || db.users[0];
+          const activeAlerts = (db.alerts || []).filter(a => a.status === 'active').map(a => ({
+            ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
+          }));
+          res.writeHead(200, headers);
+          return res.end(JSON.stringify({
+            token: makeToken(u.id),
+            user: pub(u),
+            webToken: webUser ? makeToken(webUser.id) : null,
+            webUser: webUser ? pub(webUser) : null,
+            extraAlerts: activeAlerts,
+          }));
         }
         out = api(req, req.method, url, body, user);
         if ((url === '/api/login' || url === '/api/auto-login') && out && out.token) {
@@ -599,7 +632,13 @@ init().then(() => http.createServer((req, res) => {
     if (!dfile.startsWith(DESKTOP) || !fs.existsSync(dfile) || fs.statSync(dfile).isDirectory()) {
       res.writeHead(404); return res.end('Not found');
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(dfile)] || 'application/octet-stream' });
+    const ext = path.extname(dfile);
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    if (ext === '.ps1') {
+      const buf = fs.readFileSync(dfile);
+      const hasBom = buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF;
+      return res.end(hasBom ? buf : Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), buf]));
+    }
     return fs.createReadStream(dfile).pipe(res);
   }
   const file = path.normalize(path.join(PUBLIC, url === '/' ? 'index.html' : url));
