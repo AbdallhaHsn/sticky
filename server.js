@@ -63,11 +63,18 @@ async function sync() {
     synced[c] = cur;
   }
 }
-let stateVersion = 1;
+let stateVersion = Date.now();
+const CODE_VER = (() => {
+  const h = crypto.createHash('sha1');
+  for (const f of ['index.html', 'app.js', 'icons.js', 'tailwind.css']) {
+    try { h.update(fs.readFileSync(path.join(PUBLIC, f))); } catch {}
+  }
+  return h.digest('hex').slice(0, 12);
+})();
 const sseClients = new Set();
 function broadcastChange() {
-  stateVersion++;
-  const msg = `data: ${JSON.stringify({ v: stateVersion, ts: Date.now() })}\n\n`;
+  stateVersion = Math.max(stateVersion + 1, Date.now());
+  const msg = `data: ${JSON.stringify({ v: stateVersion, codeVer: CODE_VER, ts: Date.now() })}\n\n`;
   for (const client of sseClients) {
     try { client.write(msg); } catch { sseClients.delete(client); }
   }
@@ -163,7 +170,7 @@ function visibleData(user) {
   const alerts = (db.alerts || []).filter(a => a.targetId === user.id || a.userId === user.id).map(a => ({
     ...a, targetName: (byId(db.users, a.targetId) || {}).name || '—', createdByName: (byId(db.users, a.userId) || {}).name || '—'
   })).sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt));
-  return { v: stateVersion, departments, projects, notes, done, alerts, users: users.map(pub) };
+  return { v: stateVersion, codeVer: CODE_VER, departments, projects, notes, done, alerts, users: users.map(pub) };
 }
 
 function validateDates(start, end) {
@@ -537,7 +544,7 @@ init().then(() => http.createServer((req, res) => {
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
-    res.write(`data: ${JSON.stringify({ v: stateVersion, ts: Date.now(), hello: true })}\n\n`);
+    res.write(`data: ${JSON.stringify({ v: stateVersion, codeVer: CODE_VER, ts: Date.now(), hello: true })}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
     return;
@@ -599,6 +606,9 @@ init().then(() => http.createServer((req, res) => {
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404); return res.end('Not found');
   }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+  const ext = path.extname(file);
+  const hdrs = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+  if (['.html', '.js', '.css'].includes(ext)) hdrs['Cache-Control'] = 'no-cache';
+  res.writeHead(200, hdrs);
   fs.createReadStream(file).pipe(res);
 }).listen(PORT, () => console.log("Sticky Notes running on http://localhost:" + PORT))).catch(e => { console.error("Cannot start (is MySQL running?):", e.message); process.exit(1); });

@@ -212,6 +212,7 @@ async function refresh(silent = false) {
   const d = await call('GET', 'data');
   S.data = d;
   if (d.v) S.lastVer = d.v;
+  if (d.codeVer) S.codeVer = d.codeVer;
   render(silent);
   checkScheduledAlerts();
   if (modalOpen() && S.detailNoteId) {
@@ -239,7 +240,12 @@ function connectLive() {
   es.onmessage = e => {
     try {
       const msg = JSON.parse(e.data || '{}');
-      if (msg.v && msg.v > S.lastVer) {
+      if (msg.codeVer && S.codeVer && msg.codeVer !== S.codeVer) {
+        location.reload();
+        return;
+      }
+      if (msg.codeVer) S.codeVer = msg.codeVer;
+      if (msg.v && msg.v !== S.lastVer) {
         clearTimeout(liveTimer);
         liveTimer = setTimeout(() => { if (S.me) refresh(true).catch(() => {}); }, 80);
       }
