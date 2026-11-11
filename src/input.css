@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face { font-family: 'Tajawal'; font-weight: 400; font-display: swap; src: url(/fonts/tajawal-400.woff2) format('woff2'); }
+@font-face { font-family: 'Tajawal'; font-weight: 500; font-display: swap; src: url(/fonts/tajawal-500.woff2) format('woff2'); }
+@font-face { font-family: 'Tajawal'; font-weight: 700; font-display: swap; src: url(/fonts/tajawal-700.woff2) format('woff2'); }
+@font-face { font-family: 'Tajawal'; font-weight: 800; font-display: swap; src: url(/fonts/tajawal-800.woff2) format('woff2'); }
+
+@layer base {
+  html { font-family: 'Tajawal', 'Segoe UI', Tahoma, sans-serif; }
+  body { @apply bg-white text-slate-800 antialiased; }
+  .ico { width: 1.1em; height: 1.1em; display: inline-block; vertical-align: -0.18em; flex: none; }
+}
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 active:scale-95 disabled:opacity-50; }
+  .btn-ghost { @apply bg-white/80 text-slate-700 ring-1 ring-black/10 hover:bg-white; }
+  .btn-danger { @apply bg-rose-600 text-white hover:bg-rose-700; }
+  .btn-danger-soft { @apply bg-rose-500/15 text-rose-900 ring-1 ring-rose-500/30 hover:bg-rose-600 hover:text-white hover:ring-rose-600; }
+  .btn-ok { @apply bg-emerald-600 text-white hover:bg-emerald-700; }
+  .btn-sm { @apply px-2.5 py-1 text-xs rounded-md; }
+  .btn-xs { @apply px-2 py-1 text-[11px] font-bold rounded-md; }
+  .input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100; }
+  .label { @apply mb-1 mt-3 block text-xs font-medium text-slate-500; }
+  .card { @apply rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200; }
+  .th { @apply bg-slate-50 px-3 py-2.5 text-start text-xs font-bold text-slate-500; }
+  .td { @apply border-t border-slate-100 px-3 py-2.5 text-sm; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold; }
+
+  /* Authentic Sticky Note (Post-it) paper geometry: flat top with adhesive strip, curled bottom corner & paper shadow */
+  .sticky-note {
+    position: relative;
+    border-radius: 4px 4px 6px 24px;
+    box-shadow: 0 8px 16px -4px rgba(15, 23, 42, 0.15), 0 2px 5px -1px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  }
+  .sticky-note::before {
+    content: '';
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-1.5deg);
+    width: 54px;
+    height: 14px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.58);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    pointer-events: none;
+  }
+  .sticky-note::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(45deg, transparent 48%, rgba(0, 0, 0, 0.09) 50%, rgba(255, 255, 255, 0.45) 56%);
+    border-top-right-radius: 6px;
+    pointer-events: none;
+  }
+
+  /* Authentic Post-it Sticky Note paper palette */
+  .p-future   { @apply bg-gradient-to-br from-[#D8F3FF] via-[#C6ECFF] to-[#B0E2FF] text-[#0B3B59] border-[#229ED9] ring-1 ring-[#7DD3FC]/70; }
+  .p-low      { @apply bg-gradient-to-br from-[#D3F9D8] via-[#B2F2BB] to-[#96F2D7] text-[#0B4228] border-[#2B8A3E] ring-1 ring-[#69DB7C]/70; }
+  .p-medium   { @apply bg-gradient-to-br from-[#FFF9AE] via-[#FFF078] to-[#FFE066] text-[#5C4400] border-[#E67700] ring-1 ring-[#FFD43B]/80; }
+  .p-high     { @apply bg-gradient-to-br from-[#FFE3B3] via-[#FFD08A] to-[#FFBC69] text-[#5F2700] border-[#E8590C] ring-1 ring-[#FFA94D]/80; }
+  .p-critical { @apply bg-gradient-to-br from-[#FFD6E0] via-[#FFBFCE] to-[#FFA8BD] text-[#660D24] border-[#E03131] ring-1 ring-[#FF8787]/80; }
+  .p-late     { @apply bg-gradient-to-br from-[#FFC9C9] via-[#FFA8A8] to-[#FF8787] text-[#5C0000] border-[#C92A2A] ring-1 ring-[#FA5252]/80; }
+  .p-pending  { @apply bg-gradient-to-br from-[#EBD9FF] via-[#DEC4FF] to-[#D0BFFF] text-[#2E1065] border-[#7048E8] ring-1 ring-[#B197FC]/80; }
+
+  /* Sticky note inner badges (translucent ink over paper) */
+  .b-future   { @apply bg-[#0B3B59]/10 text-[#0B3B59] ring-1 ring-[#0B3B59]/20; }
+  .b-low      { @apply bg-[#0B4228]/10 text-[#0B4228] ring-1 ring-[#0B4228]/20; }
+  .b-medium   { @apply bg-[#5C4400]/10 text-[#5C4400] ring-1 ring-[#5C4400]/20; }
+  .b-high     { @apply bg-[#5F2700]/10 text-[#5F2700] ring-1 ring-[#5F2700]/20; }
+  .b-critical { @apply bg-[#660D24]/15 text-[#660D24] ring-1 ring-[#660D24]/25; }
+  .b-late     { @apply bg-[#C92A2A] text-white shadow-sm; }
+  .b-pending  { @apply bg-[#2E1065]/10 text-[#2E1065] ring-1 ring-[#2E1065]/20; }
+
+  /* safe multi-line text truncation for long Arabic/English strings */
+  .clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
+  .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
+  .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
+
+  .note-pulse { animation: pulse-ring 1.8s infinite; }
+}
+@keyframes pulse-ring { 50% { box-shadow: 0 0 0 5px rgba(220,38,38,.25); } }

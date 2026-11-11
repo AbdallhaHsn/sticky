@@ -1,0 +1,17 @@
+{
+  "departments": [],
+  "users": [
+    {
+      "id": "6ae0cb65f5ce",
+      "name": "مدير النظام",
+      "username": "admin",
+      "password": "25570b90e42d07b8:35785f7260808d49de65ca2ea9322bcd3d01d24bafed6cfa3148ca673575c6b8",
+      "role": "admin",
+      "deptId": null,
+      "managerId": null
+    }
+  ],
+  "projects": [],
+  "notes": [],
+  "history": []
+}
