@@ -176,7 +176,7 @@ function tickRecurring() {
     if ((n.recurrence === 'daily' || n.recurrence === 'weekly') && n.waitingNextCycle && n.nextSpawnAt) {
       const spMs = Date.parse(n.nextSpawnAt);
       if (now >= spMs) {
-        const dur = Math.max(3600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 86400000));
+        const dur = Math.max(600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 28800000));
         n.start = new Date(spMs).toISOString();
         n.end = new Date(spMs + dur).toISOString();
         n.status = 'open';
@@ -483,9 +483,10 @@ function api(req, method, url, body, user) {
       const rec = ['once', 'daily', 'weekly'].includes(b.recurrence ?? cur?.recurrence) ? (b.recurrence ?? cur?.recurrence) : 'once';
       const tz = Number.isFinite(+(b.tzOffsetMin ?? cur?.tzOffsetMin)) ? +(b.tzOffsetMin ?? cur?.tzOffsetMin) : -180;
       const rTime = b.recurTime || cur?.recurTime || extractLocalTime(s, tz);
+      const rEndTime = b.recurEndTime || cur?.recurEndTime || extractLocalTime(e, tz) || '16:30';
       const rDay = (b.recurDay !== undefined && b.recurDay !== '') ? +b.recurDay : (cur?.recurDay ?? extractLocalDay(s, tz));
-      const durMs = Math.max(3600000, Date.parse(e) - Date.parse(s));
-      return { recurrence: rec, recurTime: rTime, recurDay: rDay, recurDurationMs: durMs, tzOffsetMin: tz };
+      const durMs = Math.max(600000, Date.parse(e) - Date.parse(s));
+      return { recurrence: rec, recurTime: rTime, recurEndTime: rEndTime, recurDay: rDay, recurDurationMs: durMs, tzOffsetMin: tz };
     };
     if (method === 'POST' && !id) {
       validateDates(body.start, body.end);
@@ -566,7 +567,7 @@ function api(req, method, url, body, user) {
     }
     if (action === 'spawn-now' && method === 'POST') {
       if (!canManageDept(user, deptId) && !isOwnNote && n.assigneeId !== user.id) fail(403, 'غير مسموح');
-      const dur = Math.max(3600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 86400000));
+      const dur = Math.max(600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 28800000));
       const nowMs = Date.now();
       n.start = new Date(nowMs).toISOString();
       n.end = new Date(nowMs + dur).toISOString();

@@ -131,12 +131,13 @@ const DAYS_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأرب
 function recurBadge(item, dark = false) {
   if (!item || !item.recurrence || item.recurrence === 'once') return '';
   const cls = dark ? 'bg-teal-400/20 text-teal-200 ring-1 ring-teal-400/30' : 'bg-indigo-600/15 text-indigo-950 ring-1 ring-indigo-600/25';
+  const timeRange = item.recurTime ? (item.recurEndTime ? `${item.recurTime}←${item.recurEndTime}` : item.recurTime) : '';
   if (item.recurrence === 'daily') {
-    return `<span title="تتولد تلقائياً كل يوم الساعة ${esc(item.recurTime || '')}" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}يومية${item.recurTime ? ' • ' + esc(item.recurTime) : ''}</span>`;
+    return `<span title="نوتة يومية (${esc(timeRange)})" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}يومية${timeRange ? ' • ' + esc(timeRange) : ''}</span>`;
   }
   if (item.recurrence === 'weekly') {
     const dayName = DAYS_AR[+item.recurDay || 0] || '';
-    return `<span title="تتولد تلقائياً كل أسبوع يوم ${dayName} الساعة ${esc(item.recurTime || '')}" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}أسبوعية • ${dayName}${item.recurTime ? ' ' + esc(item.recurTime) : ''}</span>`;
+    return `<span title="نوتة أسبوعية كل يوم ${dayName} (${esc(timeRange)})" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${cls}">${ic('repeat', '!h-3 !w-3')}أسبوعية • ${dayName}${timeRange ? ' ' + esc(timeRange) : ''}</span>`;
   }
   return '';
 }
@@ -1052,32 +1053,132 @@ function newProject() {
   if (S.me.role === 'admin') f.unshift({ k: 'deptId', label: 'القسم', type: 'select', options: S.data.departments.map(d => ({ v: d.id, t: d.name })) });
   form('مشروع جديد', f, b => call('POST', 'projects', b).then(p => { S.sel = { type: 'proj', id: p.id }; S.open.add(p.id); S.open.add(p.deptId); return refresh(); }));
 }
+function noteScheduleBoxHtml(note) {
+  const rec = note?.recurrence || 'once';
+  const defStartTime = note?.recurTime || (note?.start ? new Date(note.start).toTimeString().slice(0, 5) : '08:30');
+  const defEndTime = note?.recurEndTime || (note?.end && rec !== 'once' ? new Date(note.end).toTimeString().slice(0, 5) : '16:30');
+  const defDay = note?.recurDay !== undefined && note?.recurDay !== null ? +note.recurDay : new Date(note?.start || Date.now()).getDay();
+  const defOnceStart = toLocalInput(note?.start || new Date());
+  const defOnceEnd = toLocalInput(note?.end || new Date(Date.now() + 864e5));
+
+  return `<div class="mt-3 rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200/80">
+    <label class="label !mt-0 flex items-center gap-1.5 text-indigo-950">${ic('repeat', 'text-indigo-600')}نوع الجدولة والتكرار</label>
+    <select name="recurrence" id="rec-type" class="input font-bold">
+      <option value="once" ${rec === 'once' ? 'selected' : ''}>📌 لمرة واحدة فقط (تحديد تاريخ ووقت البداية والنهاية)</option>
+      <option value="daily" ${rec === 'daily' ? 'selected' : ''}>🔄 دورية — يومية (تتولد كل يوم تلقائياً)</option>
+      <option value="weekly" ${rec === 'weekly' ? 'selected' : ''}>📅 دورية — أسبوعية (تتولد كل أسبوع في اليوم المحدد)</option>
+    </select>
+
+    <!-- 1) One-time schedule: full start & end datetime -->
+    <div id="sched-once" class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 ${rec === 'once' ? '' : 'hidden'}">
+      <div>
+        <label class="label !mt-0">تاريخ ووقت البداية</label>
+        <input name="start" type="datetime-local" value="${defOnceStart}" class="input">
+      </div>
+      <div>
+        <label class="label !mt-0">تاريخ ووقت النهاية</label>
+        <input name="end" type="datetime-local" value="${defOnceEnd}" class="input">
+      </div>
+    </div>
+
+    <!-- 2) Recurring schedule (Daily / Weekly): ordered Day (if weekly) -> Start Time -> End Time (default 4:30 PM) -->
+    <div id="sched-recur" class="mt-3 space-y-3 ${rec === 'once' ? 'hidden' : ''}">
+      <div id="rec-day-wrap" class="${rec === 'weekly' ? '' : 'hidden'}">
+        <label class="label !mt-0">اليوم المحدد في الأسبوع</label>
+        <select name="recurDay" class="input font-bold">
+          ${DAYS_AR.map((d, idx) => `<option value="${idx}" ${defDay === idx ? 'selected' : ''}>يوم ${d}</option>`).join('')}
+        </select>
+      </div>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label class="label !mt-0">وقت البداية (التوليد التلقائي)</label>
+          <input name="recurTime" id="rec-start-time" type="time" value="${esc(defStartTime)}" class="input">
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <label class="label !mt-0">وقت النهاية</label>
+            <button type="button" id="btn-eod" class="text-[11px] font-extrabold text-indigo-700 hover:underline">نهاية الدوام 4:30 م</button>
+          </div>
+          <input name="recurEndTime" id="rec-end-time" type="time" value="${esc(defEndTime)}" class="input">
+        </div>
+      </div>
+      <p class="text-[11px] leading-relaxed text-indigo-800">
+        💡 وقت النهاية مضبوط افتراضياً على <b>نهاية الدوام (04:30 مساءً)</b> ويمكنك تعديله لأي وقت آخر. عند إنهاء المهمة اليوم ستتولد تلقائياً في الدورة القادمة بنفس أوقات البداية والنهاية.
+      </p>
+    </div>
+  </div>`;
+}
+
+function bindNoteScheduleBox(container) {
+  const sel = container.querySelector('#rec-type');
+  if (!sel) return;
+  const onceWrap = container.querySelector('#sched-once');
+  const recurWrap = container.querySelector('#sched-recur');
+  const dayWrap = container.querySelector('#rec-day-wrap');
+  const eodBtn = container.querySelector('#btn-eod');
+  const endInput = container.querySelector('#rec-end-time');
+  if (eodBtn && endInput) {
+    eodBtn.onclick = () => { endInput.value = '16:30'; };
+  }
+  sel.onchange = () => {
+    const v = sel.value;
+    onceWrap.classList.toggle('hidden', v !== 'once');
+    recurWrap.classList.toggle('hidden', v === 'once');
+    dayWrap.classList.toggle('hidden', v !== 'weekly');
+  };
+}
+
+function applyNoteScheduleToPayload(b) {
+  b.recurDay = +b.recurDay || 0;
+  b.tzOffsetMin = new Date().getTimezoneOffset();
+  if (b.recurrence === 'daily' || b.recurrence === 'weekly') {
+    const startStr = /^\d{1,2}:\d{2}$/.test(b.recurTime || '') ? b.recurTime : '08:30';
+    const endStr = /^\d{1,2}:\d{2}$/.test(b.recurEndTime || '') ? b.recurEndTime : '16:30';
+    b.recurTime = startStr;
+    b.recurEndTime = endStr;
+    const [sh, sm] = startStr.split(':').map(x => parseInt(x, 10) || 0);
+    const [eh, em] = endStr.split(':').map(x => parseInt(x, 10) || 0);
+    const now = new Date();
+    const sDt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0, 0);
+    if (b.recurrence === 'weekly') {
+      const diff = ((b.recurDay - now.getDay()) + 7) % 7;
+      sDt.setDate(sDt.getDate() + diff);
+    }
+    const eDt = new Date(sDt.getFullYear(), sDt.getMonth(), sDt.getDate(), eh, em, 0, 0);
+    if (eDt.getTime() <= sDt.getTime()) {
+      eDt.setDate(eDt.getDate() + 1);
+    }
+    b.start = sDt.toISOString();
+    b.end = eDt.toISOString();
+  } else {
+    b.start = new Date(b.start).toISOString();
+    b.end = new Date(b.end).toISOString();
+  }
+}
+
 function recurrenceBoxHtml(item) {
   const rec = item?.recurrence || 'once';
   const defTime = item?.recurTime || new Date(item?.start || item?.eventAt || Date.now()).toTimeString().slice(0, 5) || '09:00';
   const defDay = item?.recurDay !== undefined && item?.recurDay !== null ? +item.recurDay : new Date(item?.start || item?.eventAt || Date.now()).getDay();
   return `<div class="mt-3 rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200/80">
-    <label class="label !mt-0 flex items-center gap-1.5 text-indigo-950">${ic('repeat', 'text-indigo-600')}نوع الجدولة والتكرار التلقائي</label>
+    <label class="label !mt-0 flex items-center gap-1.5 text-indigo-950">${ic('repeat', 'text-indigo-600')}تكرار التنبيه دورياً</label>
     <select name="recurrence" id="rec-type" class="input">
       <option value="once" ${rec === 'once' ? 'selected' : ''}>📌 لمرة واحدة فقط</option>
-      <option value="daily" ${rec === 'daily' ? 'selected' : ''}>🔄 دورية — يومية (تتولد تلقائياً كل يوم في الموعد المحدد)</option>
-      <option value="weekly" ${rec === 'weekly' ? 'selected' : ''}>📅 دورية — أسبوعية (تتولد تلقائياً كل أسبوع في اليوم والوقت المحددين)</option>
+      <option value="daily" ${rec === 'daily' ? 'selected' : ''}>🔄 دورية — يومية (يتكرر كل يوم تلقائياً)</option>
+      <option value="weekly" ${rec === 'weekly' ? 'selected' : ''}>📅 دورية — أسبوعية (يتكرر كل أسبوع في اليوم والوقت المحددين)</option>
     </select>
     <div id="rec-opts" class="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2 ${rec === 'once' ? 'hidden' : ''}">
       <div id="rec-day-wrap" class="${rec === 'weekly' ? '' : 'hidden'}">
-        <label class="label !mt-0">يوم التوليد الأسبوعي</label>
+        <label class="label !mt-0">اليوم في الأسبوع</label>
         <select name="recurDay" class="input">
           ${DAYS_AR.map((d, idx) => `<option value="${idx}" ${defDay === idx ? 'selected' : ''}>يوم ${d}</option>`).join('')}
         </select>
       </div>
       <div id="rec-time-wrap" class="${rec === 'weekly' ? '' : 'sm:col-span-2'}">
-        <label class="label !mt-0">وقت التوليد التلقائي</label>
+        <label class="label !mt-0">وقت التنبيه الأساسي</label>
         <input name="recurTime" type="time" value="${esc(defTime)}" class="input">
       </div>
     </div>
-    <p id="rec-hint" class="mt-2 text-[11px] leading-relaxed text-indigo-800 ${rec === 'once' ? 'hidden' : ''}">
-      💡 عند إنهاء نوتة اليوم، تُحفظ نسخة اليوم في الأرشيف وتتجدول النوتة تلقائياً للدورة القادمة في الموعد المحدد أعلاه.
-    </p>
   </div>`;
 }
 function bindRecurrenceBox(container) {
@@ -1086,11 +1187,9 @@ function bindRecurrenceBox(container) {
   const opts = container.querySelector('#rec-opts');
   const dayWrap = container.querySelector('#rec-day-wrap');
   const timeWrap = container.querySelector('#rec-time-wrap');
-  const hint = container.querySelector('#rec-hint');
   sel.onchange = () => {
     const v = sel.value;
     opts.classList.toggle('hidden', v === 'once');
-    hint.classList.toggle('hidden', v === 'once');
     dayWrap.classList.toggle('hidden', v !== 'weekly');
     timeWrap.classList.toggle('sm:col-span-2', v !== 'weekly');
   };
@@ -1112,17 +1211,7 @@ function noteForm(proj, note, parentId) {
     <select name="assigneeId" class="input">
       ${emps.map(u => `<option value="${u.id}" ${note?.assigneeId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
     </select>
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <div>
-        <label class="label">تاريخ ووقت البداية</label>
-        <input name="start" type="datetime-local" value="${toLocalInput(note?.start || new Date())}" class="input" required>
-      </div>
-      <div>
-        <label class="label">تاريخ ووقت النهاية</label>
-        <input name="end" type="datetime-local" value="${toLocalInput(note?.end || new Date(Date.now() + 864e5))}" class="input" required>
-      </div>
-    </div>
-    ${recurrenceBoxHtml(note)}
+    ${noteScheduleBoxHtml(note)}
     <div class="mt-5 flex gap-2">
       <button class="btn">${ic('check')}حفظ النوتة</button>
       <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
@@ -1130,14 +1219,11 @@ function noteForm(proj, note, parentId) {
   </form>`;
   showModal();
   $('#cx').onclick = hideModal;
-  bindRecurrenceBox(m);
+  bindNoteScheduleBox(m);
   m.querySelector('form').onsubmit = guard(async e => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
-    b.start = new Date(b.start).toISOString();
-    b.end = new Date(b.end).toISOString();
-    b.recurDay = +b.recurDay;
-    b.tzOffsetMin = new Date().getTimezoneOffset();
+    applyNoteScheduleToPayload(b);
     await (note ? call('PUT', 'notes/' + note.id, b) : call('POST', 'notes', { ...b, projectId: proj.id, parentId: parentId || null }));
     hideModal();
     await refresh();
@@ -1161,17 +1247,7 @@ function personalNoteForm(note = null, parentId = null, defaultProj = null) {
     <select name="projectId" class="input">
       ${projOpts.map(o => `<option value="${esc(o.v)}" ${o.v === initProj ? 'selected' : ''}>${esc(o.t)}</option>`).join('')}
     </select>` : ''}
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <div>
-        <label class="label">تاريخ ووقت البداية</label>
-        <input name="start" type="datetime-local" value="${toLocalInput(note?.start || new Date())}" class="input" required>
-      </div>
-      <div>
-        <label class="label">تاريخ ووقت النهاية</label>
-        <input name="end" type="datetime-local" value="${toLocalInput(note?.end || new Date(Date.now() + 864e5))}" class="input" required>
-      </div>
-    </div>
-    ${recurrenceBoxHtml(note)}
+    ${noteScheduleBoxHtml(note)}
     <div class="mt-5 flex gap-2">
       <button class="btn">${ic('check')}حفظ النوتة</button>
       <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
@@ -1179,14 +1255,11 @@ function personalNoteForm(note = null, parentId = null, defaultProj = null) {
   </form>`;
   showModal();
   $('#cx').onclick = hideModal;
-  bindRecurrenceBox(m);
+  bindNoteScheduleBox(m);
   m.querySelector('form').onsubmit = guard(async e => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
-    b.start = new Date(b.start).toISOString();
-    b.end = new Date(b.end).toISOString();
-    b.recurDay = +b.recurDay;
-    b.tzOffsetMin = new Date().getTimezoneOffset();
+    applyNoteScheduleToPayload(b);
     if (note) {
       await call('PUT', 'notes/' + note.id, b);
     } else {
