@@ -93,8 +93,11 @@ const fmt = d => {
 };
 const toLocalInput = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
 const nm = id => (S.data.users.find(u => u.id === id) || {}).name || '—';
+const noteAssignees = n => (Array.isArray(n?.assigneeIds) && n.assigneeIds.length) ? n.assigneeIds : (n?.assigneeId ? [n.assigneeId] : []);
+const isAssignedToMe = n => noteAssignees(n).includes(S.me?.id);
+const nms = n => n?.assigneeName || noteAssignees(n).map(id => nm(id)).join('، ') || '—';
 const deptName = id => (S.data.departments.find(d => d.id === id) || {}).name || '—';
-const canConfirm = n => S.me.role === 'admin' || (S.me.role === 'manager' && (S.data.users.find(u => u.id === n.assigneeId) || {}).managerId === S.me.id);
+const canConfirm = n => S.me.role === 'admin' || (S.me.role === 'manager' && (noteAssignees(n).some(uid => (S.data.users.find(u => u.id === uid) || {}).managerId === S.me.id) || (S.data.projects.find(p => p.id === n.projectId) || {}).deptId === S.me.deptId));
 const isMgr = () => S.me.role !== 'employee';
 const empty = (icon, text) => `<div class="col-span-full flex flex-col items-center gap-2 py-12 text-slate-400">${ic(icon, '!h-10 !w-10')}<span>${text}</span></div>`;
 
@@ -142,14 +145,14 @@ function recurBadge(item, dark = false) {
   return '';
 }
 const shortDate = d => new Date(d).toLocaleDateString('ar', { day: 'numeric', month: 'short' });
-const doneTip = d => `${d.title} — أنجزها ${nm(d.assigneeId)} • أُكّدت ${fmt(d.confirmedAt)} (اضغط لعرض التفاصيل)`;
+const doneTip = d => `${d.title} — أنجزها ${nms(d)} • أُكّدت ${fmt(d.confirmedAt)} (اضغط لعرض التفاصيل)`;
 function scheduledSection(list) {
   if (!list || !list.length) return '';
   return `<details open class="mt-5 rounded-2xl bg-indigo-50/80 ring-1 ring-indigo-200"><summary class="flex cursor-pointer select-none items-center gap-2 px-4 py-2.5 text-sm font-extrabold text-indigo-900">${ic('repeat', 'text-indigo-600')}نوتات دورية أُنجزت لهذه الدورة وبانتظار موعد التوليد القادم (${list.length})<span class="ms-auto text-indigo-400">${ic('chevron-down')}</span></summary>
     <div class="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3 px-4 pb-3.5">${list.map(n => `<div data-nd="sched:${n.id}" class="flex cursor-pointer flex-col gap-1.5 rounded-2xl bg-white p-3 text-xs shadow-sm ring-1 ring-indigo-200/80 transition hover:ring-indigo-400">
       <div class="flex items-center justify-between gap-1.5">${recurBadge(n)}<span class="text-[11px] font-bold text-emerald-700">${ic('check-check', '!h-3.5 !w-3.5')}أُنجزت الدورة #${n.cycleCount || 1}</span></div>
       <div class="font-extrabold text-slate-800">${esc(n.title)}</div>
-      <div class="text-[11px] text-slate-500">${ic('user', '!h-3 !w-3')} ${esc(nm(n.assigneeId))} • ${ic('clock', '!h-3 !w-3')} تتولد: <b class="text-indigo-700">${fmt(n.nextSpawnAt)}</b></div>
+      <div class="text-[11px] text-slate-500">${ic('users', '!h-3 !w-3')} ${esc(nms(n))} • ${ic('clock', '!h-3 !w-3')} تتولد: <b class="text-indigo-700">${fmt(n.nextSpawnAt)}</b></div>
       <div class="mt-1 flex items-center gap-1.5 border-t border-slate-100 pt-1.5">
         <button type="button" data-a="spawn:${n.id}" class="btn btn-xs !bg-indigo-600 !text-white">${ic('zap')}توليد الآن</button>
         <button type="button" data-a="edit:${n.id}" class="btn btn-xs btn-ghost">${ic('pencil')}تعديل الجدولة</button>
@@ -504,10 +507,10 @@ function renderBoardMain() {
   const q = S.bq.trim().toLowerCase();
   let list = baseList.filter(n => {
     if (S.bPri !== 'all' && priority(n) !== S.bPri) return false;
-    if (S.bUser !== 'all' && n.assigneeId !== S.bUser) return false;
+    if (S.bUser !== 'all' && !noteAssignees(n).includes(S.bUser)) return false;
     if (q) {
       const pName = (projects.find(p => p.id === n.projectId) || {}).name || '';
-      const uName = nm(n.assigneeId);
+      const uName = nms(n);
       const hay = `${n.title} ${n.description || ''} ${pName} ${uName}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -592,16 +595,16 @@ function renderBoardMain() {
 }
 
 const abtn = (a, id, icon, text, cls = '', sz = 'btn-sm') => `<button class="btn ${sz} ${cls}" data-a="${a}:${id}">${ic(icon)}${text}</button>`;
-const isOwnPersonal = n => (n.personal || n.createdBy === S.me.id) && n.assigneeId === S.me.id;
+const isOwnPersonal = n => (n.personal || n.createdBy === S.me.id) && isAssignedToMe(n) && noteAssignees(n).length === 1;
 function noteActs(n, proj, full) {
   let acts = '';
   const sz = full ? 'btn-sm' : 'btn-xs flex-1';
   const own = isOwnPersonal(n);
-  if (n.status === 'open' && n.assigneeId === S.me.id) acts += abtn('done', n.id, 'check', full ? 'تم الانتهاء' : 'تم الإنجاز', 'btn-ok', sz);
+  if (n.status === 'open' && isAssignedToMe(n)) acts += abtn('done', n.id, 'check', full ? 'تم الانتهاء' : 'تم الإنجاز', 'btn-ok', sz);
   if (n.status === 'pending' && canConfirm(n)) acts += abtn('confirm', n.id, 'check-check', 'تأكيد', 'btn-ok', sz) + abtn('reject', n.id, 'undo-2', 'إرجاع', 'btn-danger-soft', sz);
   if (full && (own || (isMgr() && (S.me.role === 'admin' || S.me.deptId === proj?.deptId)))) {
     acts += abtn('edit', n.id, 'pencil', 'تعديل', 'btn-ghost') + abtn('sub', n.id, 'git-fork', 'فرعية', 'btn-ghost') + abtn('del', n.id, 'trash-2', '', 'btn-ghost !text-rose-600');
-  } else if (full && n.assigneeId === S.me.id) {
+  } else if (full && isAssignedToMe(n)) {
     acts += abtn('sub', n.id, 'git-fork', 'فرعية', 'btn-ghost');
   }
   return acts;
@@ -614,6 +617,8 @@ function noteHtml(n) {
   const par = n.parentId ? S.data.notes.find(x => x.id === n.parentId) : null;
   const hasLongDesc = (n.description || '').length > 100 || (n.description || '').split('\n').length > 3;
   const own = isOwnPersonal(n);
+  const aIds = noteAssignees(n);
+  const aText = nms(n);
   return `<article data-nd="open:${n.id}" class="${p.cls} sticky-note group mt-2 flex min-h-48 cursor-pointer flex-col gap-2 border-t-[6px] p-4 transition-all duration-200 hover:-translate-y-1 hover:rotate-[-0.4deg] ${k === 'late' ? 'note-pulse' : ''}">
     <div class="flex items-center justify-between gap-1.5">
       <span class="chip ${p.badge}">${ic(p.icon, '!h-3.5 !w-3.5')}${p.label}</span>
@@ -631,7 +636,7 @@ function noteHtml(n) {
     <div class="mt-auto space-y-2 pt-1">
       <div class="h-1.5 overflow-hidden rounded-full bg-black/10"><i class="block h-full rounded-full bg-current opacity-55" style="width:${pct}%"></i></div>
       <div class="flex items-center justify-between gap-2 text-xs">
-        <span title="${esc(nm(n.assigneeId))}" class="flex min-w-0 items-center gap-1 font-bold opacity-90">${ic('user', 'opacity-70')}<span class="truncate">${esc(nm(n.assigneeId))}</span></span>
+        <span title="${esc(aText)}" class="flex min-w-0 items-center gap-1 font-bold opacity-90">${ic(aIds.length > 1 ? 'users' : 'user', 'opacity-70')}<span class="truncate">${esc(aText)}</span>${aIds.length > 1 ? `<span class="flex-none rounded-full bg-black/15 px-1.5 py-0.2 text-[10px] font-extrabold">${aIds.length}</span>` : ''}</span>
         <span class="flex flex-none items-center gap-1 font-extrabold">${ic('clock', 'opacity-70')}${n.status === 'pending' ? 'بانتظار التأكيد' : remaining(n)}</span>
       </div>
       <div class="flex items-center justify-between gap-1 border-t border-black/10 pt-1.5 text-[11px] opacity-80">
@@ -698,7 +703,7 @@ function showNoteDetails(n, isArchived = false) {
   const proj = S.data.projects.find(p => p.id === n.projectId);
   const pName = n.projectName || proj?.name || '—';
   const dName = n.deptName || (proj ? deptName(proj.deptId) : '—');
-  const aName = n.assigneeName || nm(n.assigneeId);
+  const aName = nms(n);
   const cName = n.createdByName || (n.createdBy ? nm(n.createdBy) : '—');
   const par = n.parentId ? (S.data.notes.find(x => x.id === n.parentId) || S.data.done.find(x => x.id === n.parentId) || cachedHistory.find(x => x.id === n.parentId)) : null;
   const subs = S.data.notes ? S.data.notes.filter(c => c.parentId === n.id) : [];
@@ -813,7 +818,7 @@ function treeView() {
   const matchNote = n => {
     if (S.tPri !== 'all' && priority(n) !== S.tPri) return false;
     if (q) {
-      const hay = `${n.title} ${n.description || ''} ${nm(n.assigneeId)}`.toLowerCase();
+      const hay = `${n.title} ${n.description || ''} ${nms(n)}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -860,8 +865,8 @@ function treeView() {
           ${par ? `<div title="فرعية من: ${esc(par.title)}" class="mt-1 flex min-w-0 items-center gap-1 rounded-md bg-black/[0.06] px-1.5 py-0.5 text-[10px] opacity-85">${ic('corner-down-left', '!h-3 !w-3 flex-none opacity-70')}<span class="truncate">${esc(par.title)}</span></div>` : ''}
           ${n.description ? `<p title="${esc(n.description)}" class="mt-0.5 clamp-1 text-[11px] leading-relaxed opacity-80">${esc(n.description)}</p>` : ''}
           <div class="mt-2 flex items-center justify-between gap-1 border-t border-black/10 pt-1.5 text-[11px]">
-            <span title="الموظف: ${esc(nm(n.assigneeId))}" class="flex min-w-0 items-center gap-1 font-bold opacity-90">
-              ${ic('user', '!h-3 !w-3 opacity-70')}<span class="truncate">${esc(nm(n.assigneeId))}</span>
+            <span title="الموظفون: ${esc(nms(n))}" class="flex min-w-0 items-center gap-1 font-bold opacity-90">
+              ${ic(noteAssignees(n).length > 1 ? 'users' : 'user', '!h-3 !w-3 opacity-70')}<span class="truncate">${esc(nms(n))}</span>
             </span>
             <span title="الموعد النهائي: ${esc(fmt(n.end))}" class="flex flex-none items-center gap-0.5 text-[10px] font-semibold opacity-75">
               ${ic('calendar-days', '!h-3 !w-3 opacity-70')}${shortDate(n.end)}
@@ -1201,18 +1206,42 @@ function noteForm(proj, note, parentId) {
   S.detailNoteId = null;
   const m = $('#modal');
   const titleTxt = note ? 'تعديل نوتة' : parentId ? 'نوتة فرعية' : 'نوتة جديدة للمشروع';
+  const curIds = new Set(note ? noteAssignees(note) : [emps[0].id]);
+
   m.innerHTML = `<form class="max-h-[92vh] w-full max-w-lg overflow-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
     <h3 class="mb-2 text-lg font-extrabold text-slate-800">${esc(titleTxt)}</h3>
     <label class="label">العنوان</label>
     <input name="title" value="${esc(note?.title || '')}" class="input" required autofocus>
     <label class="label">الوصف والتفاصيل</label>
     <textarea name="description" rows="3" class="input">${esc(note?.description || '')}</textarea>
-    <label class="label">إسناد إلى الموظف</label>
-    <select name="assigneeId" class="input">
-      ${emps.map(u => `<option value="${u.id}" ${note?.assigneeId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-    </select>
+
+    <div class="mt-3 rounded-2xl bg-slate-50/90 p-3.5 ring-1 ring-slate-200/90">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <label class="label !m-0 flex items-center gap-1.5 text-slate-800">${ic('users', 'text-brand-600')}إسناد إلى الموظفين <span id="asg-cnt" class="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-extrabold text-brand-700">${curIds.size} محدد</span></label>
+        <div class="flex items-center gap-2 text-xs">
+          <button type="button" id="asg-all" class="font-extrabold text-brand-600 hover:underline">تحديد الكل</button>
+          <span class="text-slate-300">|</span>
+          <button type="button" id="asg-none" class="font-bold text-slate-500 hover:underline">إلغاء الكل</button>
+        </div>
+      </div>
+      <div class="grid max-h-40 grid-cols-1 gap-1.5 overflow-y-auto sm:grid-cols-2">
+        ${emps.map(u => `<label class="asg-item flex cursor-pointer select-none items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-brand-50/60">
+          <input type="checkbox" name="assigneeIds" value="${esc(u.id)}" ${curIds.has(u.id) ? 'checked' : ''} class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+          <span class="truncate">${esc(u.name)}</span>
+        </label>`).join('')}
+      </div>
+      ${!note ? `<div id="multi-mode-wrap" class="mt-2.5 border-t border-slate-200/80 pt-2.5 ${curIds.size > 1 ? '' : 'hidden'}">
+        <label class="label !mt-0 text-[11px] text-slate-600">طريقة الإسناد عند اختيار أكثر من موظف:</label>
+        <select name="multiMode" class="input !py-1.5 text-xs font-bold">
+          <option value="shared">👥 نوتة واحدة مشتركة لجميع الموظفين المحددين</option>
+          <option value="separate">👤 إنشاء نوتة مستقلة لكل موظف على حدة</option>
+        </select>
+      </div>` : ''}
+    </div>
+
     ${noteScheduleBoxHtml(note)}
-    <div class="mt-5 flex gap-2">
+    <div id="nfe" class="mt-2 min-h-4 text-xs font-bold text-rose-600"></div>
+    <div class="mt-4 flex gap-2">
       <button class="btn">${ic('check')}حفظ النوتة</button>
       <button type="button" class="btn btn-ghost" id="cx">${ic('x')}إلغاء</button>
     </div>
@@ -1220,9 +1249,29 @@ function noteForm(proj, note, parentId) {
   showModal();
   $('#cx').onclick = hideModal;
   bindNoteScheduleBox(m);
+
+  const cbs = [...m.querySelectorAll('input[name="assigneeIds"]')];
+  const cntEl = m.querySelector('#asg-cnt');
+  const multiWrap = m.querySelector('#multi-mode-wrap');
+  const syncAsgUi = () => {
+    const checked = cbs.filter(c => c.checked).length;
+    if (cntEl) cntEl.textContent = `${checked} محدد`;
+    if (multiWrap) multiWrap.classList.toggle('hidden', checked <= 1);
+  };
+  cbs.forEach(c => c.onchange = syncAsgUi);
+  m.querySelector('#asg-all').onclick = () => { cbs.forEach(c => c.checked = true); syncAsgUi(); };
+  m.querySelector('#asg-none').onclick = () => { cbs.forEach(c => c.checked = false); syncAsgUi(); };
+
   m.querySelector('form').onsubmit = guard(async e => {
     e.preventDefault();
+    const selectedIds = cbs.filter(c => c.checked).map(c => c.value);
+    if (!selectedIds.length) {
+      $('#nfe').textContent = 'يرجى اختيار موظف واحد على الأقل لإسناد النوتة';
+      return;
+    }
     const b = Object.fromEntries(new FormData(e.target));
+    b.assigneeIds = selectedIds;
+    b.assigneeId = selectedIds[0];
     applyNoteScheduleToPayload(b);
     await (note ? call('PUT', 'notes/' + note.id, b) : call('POST', 'notes', { ...b, projectId: proj.id, parentId: parentId || null }));
     hideModal();

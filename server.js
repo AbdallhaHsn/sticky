@@ -117,11 +117,28 @@ function noteDeptId(n) { const p = byId(db.projects, n.projectId); return p && p
 function canManageDept(user, deptId) {
   return user.role === 'admin' || (user.role === 'manager' && user.deptId === deptId);
 }
+function getAssigneeIds(n) {
+  if (!n) return [];
+  if (Array.isArray(n.assigneeIds) && n.assigneeIds.length) return [...new Set(n.assigneeIds.filter(Boolean))];
+  return n.assigneeId ? [n.assigneeId] : [];
+}
+function isNoteAssignee(n, userId) {
+  return !!userId && getAssigneeIds(n).includes(userId);
+}
+function noteAssigneeNames(n) {
+  return getAssigneeIds(n).map(uid => (byId(db.users, uid) || {}).name || '—').join('، ') || '—';
+}
 // Who may confirm completion of a note: the assignee's direct manager (or admin)
 function canConfirm(user, note) {
   if (user.role === 'admin') return true;
-  const assignee = byId(db.users, note.assigneeId);
-  return !!assignee && user.role === 'manager' && assignee.managerId === user.id;
+  if (user.role !== 'manager') return false;
+  const ids = getAssigneeIds(note);
+  const deptId = noteDeptId(note);
+  if (deptId && user.deptId === deptId) return true;
+  return ids.some(uid => {
+    const assignee = byId(db.users, uid);
+    return !!assignee && assignee.managerId === user.id;
+  });
 }
 
 function ensurePersonalProject(user) {
@@ -250,35 +267,45 @@ function visibleData(user) {
     departments = db.departments;
     projects = db.projects.filter(canSeeProj);
     const pids = new Set(projects.map(p => p.id));
-    allNotes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
+    allNotes = db.notes.filter(n => pids.has(n.projectId) || isNoteAssignee(n, user.id));
     users = db.users;
   } else if (user.role === 'manager') {
     departments = db.departments.filter(d => d.id === user.deptId);
     projects = db.projects.filter(p => (p.deptId === user.deptId || p.ownerId === user.id) && canSeeProj(p));
     const pids = new Set(projects.map(p => p.id));
-    allNotes = db.notes.filter(n => pids.has(n.projectId) || n.assigneeId === user.id);
+    allNotes = db.notes.filter(n => pids.has(n.projectId) || isNoteAssignee(n, user.id));
     users = db.users.filter(u => u.deptId === user.deptId || u.id === user.id);
   } else { // employee: own assigned notes + own personal notes
-    allNotes = db.notes.filter(n => n.assigneeId === user.id || n.createdBy === user.id);
+    allNotes = db.notes.filter(n => isNoteAssignee(n, user.id) || n.createdBy === user.id);
     const pids = new Set(allNotes.map(n => n.projectId));
     projects = db.projects.filter(p => !p.archived && (pids.has(p.id) || p.ownerId === user.id));
     const dids = new Set(projects.map(p => p.deptId).concat(user.deptId ? [user.deptId] : []));
     departments = db.departments.filter(d => dids.has(d.id));
-    users = db.users.filter(u => u.id === user.id || u.id === user.managerId);
+    const coAssigneeIds = new Set();
+    allNotes.forEach(n => getAssigneeIds(n).forEach(uid => coAssigneeIds.add(uid)));
+    users = db.users.filter(u => u.id === user.id || u.id === user.managerId || coAssigneeIds.has(u.id));
   }
-  const notes = allNotes.filter(n => !n.waitingNextCycle);
-  const scheduledNotes = allNotes.filter(n => n.waitingNextCycle);
+  const normNote = n => {
+    const ids = getAssigneeIds(n);
+    return { ...n, assigneeIds: ids, assigneeId: ids[0] || n.assigneeId };
+  };
+  const notes = allNotes.filter(n => !n.waitingNextCycle).map(normNote);
+  const scheduledNotes = allNotes.filter(n => n.waitingNextCycle).map(normNote);
   // finished (confirmed) notes, with full details for the detail modal
   const pids = new Set(projects.map(p => p.id));
-  const done = db.history.filter(h => pids.has(h.projectId) && (user.role !== 'employee' || h.assigneeId === user.id))
+  const done = db.history.filter(h => pids.has(h.projectId) && (user.role !== 'employee' || isNoteAssignee(h, user.id)))
     .map(h => {
       const p = byId(db.projects, h.projectId);
-      return { ...h, projectName: (p || {}).name || '—', deptName: (byId(db.departments, p?.deptId) || {}).name || '—',
-        assigneeName: (byId(db.users, h.assigneeId) || {}).name || '—', createdByName: (byId(db.users, h.createdBy) || {}).name || '—',
+      const ids = getAssigneeIds(h);
+      return { ...h, assigneeIds: ids, assigneeId: ids[0] || h.assigneeId,
+        projectName: (p || {}).name || '—', deptName: (byId(db.departments, p?.deptId) || {}).name || '—',
+        assigneeName: noteAssigneeNames(h), createdByName: (byId(db.users, h.createdBy) || {}).name || '—',
         confirmedByName: (byId(db.users, h.confirmedBy) || {}).name || '—' };
     })
     .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt));
-  if (user.role === 'manager' || user.role === 'admin') users = users.concat(db.users.filter(u => done.some(d => d.assigneeId === u.id) && !users.includes(u)));
+  if (user.role === 'manager' || user.role === 'admin') {
+    users = users.concat(db.users.filter(u => done.some(d => isNoteAssignee(d, u.id)) && !users.includes(u)));
+  }
   const alerts = (db.alerts || []).filter(a => canSeeAlert(user, a)).map(a => formatAlertForUser(a, user))
     .sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt));
   return { v: stateVersion, codeVer: CODE_VER, departments, projects, notes, scheduledNotes, done, alerts, users: users.map(pub) };
@@ -289,11 +316,16 @@ function validateDates(start, end) {
   if (Date.parse(end) < Date.parse(start)) fail(400, 'تاريخ النهاية قبل البداية');
 }
 
-function validateAssignee(user, assigneeId, deptId) {
-  const a = byId(db.users, assigneeId);
-  if (!a || a.role !== 'employee') fail(400, 'يجب إسناد النوتة إلى موظف');
-  if (a.deptId !== deptId) fail(400, 'الموظف ليس من نفس قسم المشروع');
-  return a;
+function validateAssignees(user, rawIds, fallbackId, deptId) {
+  const list = Array.isArray(rawIds) && rawIds.length ? rawIds : (fallbackId ? [fallbackId] : []);
+  const ids = [...new Set(list.map(x => String(x || '').trim()).filter(Boolean))];
+  if (!ids.length) fail(400, 'يجب اختيار موظف واحد على الأقل لإسناد النوتة');
+  for (const uid of ids) {
+    const a = byId(db.users, uid);
+    if (!a || a.role !== 'employee') fail(400, 'يجب إسناد النوتة إلى موظف');
+    if (a.deptId !== deptId) fail(400, 'الموظف ليس من نفس قسم المشروع');
+  }
+  return ids;
 }
 
 // remember the device each user logs in from (web browser or desktop agent)
@@ -374,13 +406,15 @@ function api(req, method, url, body, user) {
   if (res === 'history' && method === 'GET') {
     const list = db.history.filter(h => {
       if (user.role === 'admin') return true;
-      if (user.role === 'employee') return h.assigneeId === user.id;
+      if (user.role === 'employee') return isNoteAssignee(h, user.id);
       const p = byId(db.projects, h.projectId);
       return p && p.deptId === user.deptId;
     }).map(h => {
       const p = byId(db.projects, h.projectId);
-      return { ...h, projectName: (p || {}).name || '—', deptName: (byId(db.departments, p?.deptId) || {}).name || '—',
-        assigneeName: (byId(db.users, h.assigneeId) || {}).name || '—', createdByName: (byId(db.users, h.createdBy) || {}).name || '—',
+      const ids = getAssigneeIds(h);
+      return { ...h, assigneeIds: ids, assigneeId: ids[0] || h.assigneeId,
+        projectName: (p || {}).name || '—', deptName: (byId(db.departments, p?.deptId) || {}).name || '—',
+        assigneeName: noteAssigneeNames(h), createdByName: (byId(db.users, h.createdBy) || {}).name || '—',
         confirmedByName: (byId(db.users, h.confirmedBy) || {}).name || '—' };
     });
     return list.reverse();
@@ -444,7 +478,7 @@ function api(req, method, url, body, user) {
     }
     if (method === 'DELETE') {
       if (db.users.some(x => x.managerId === id)) fail(400, 'هذا المدير لديه موظفون تابعون');
-      if (db.notes.some(n => n.assigneeId === id)) fail(400, 'لدى المستخدم نوتات نشطة');
+      if (db.notes.some(n => isNoteAssignee(n, id))) fail(400, 'لدى المستخدم نوتات نشطة');
       db.users = db.users.filter(x => x.id !== id); db.devices = db.devices.filter(d => d.userId !== id); save(); return { ok: true };
     }
   }
@@ -490,44 +524,60 @@ function api(req, method, url, body, user) {
     };
     if (method === 'POST' && !id) {
       validateDates(body.start, body.end);
-      let p, assigneeId, isPersonal = false;
+      let p, assigneeIds = [], isPersonal = false;
       if (body.personal || body.projectId === 'personal' || !body.projectId) {
         p = ensurePersonalProject(user);
-        assigneeId = user.id;
+        assigneeIds = [user.id];
         isPersonal = true;
       } else {
         p = byId(db.projects, body.projectId); if (!p) fail(400, 'المشروع غير موجود');
         if (p.archived) fail(400, 'المشروع مؤرشف');
         if (p.personal && p.ownerId === user.id) {
-          assigneeId = user.id;
+          assigneeIds = [user.id];
           isPersonal = true;
         } else if (user.role === 'employee') {
           if (p.deptId !== user.deptId) fail(403, 'غير مسموح');
-          assigneeId = user.id;
+          assigneeIds = [user.id];
           isPersonal = true;
         } else {
           if (!canManageDept(user, p.deptId)) fail(403, 'غير مسموح');
-          validateAssignee(user, body.assigneeId, p.deptId);
-          assigneeId = body.assigneeId;
+          assigneeIds = validateAssignees(user, body.assigneeIds, body.assigneeId, p.deptId);
         }
       }
       if (body.parentId) { const par = byId(db.notes, body.parentId); if (!par || par.projectId !== p.id) fail(400, 'النوتة الأم غير صحيحة'); }
       const recCfg = parseRec(body, null, body.start, body.end);
+      if (!isPersonal && body.multiMode === 'separate' && assigneeIds.length > 1) {
+        const created = assigneeIds.map(uidVal => {
+          const item = { id: uid(), projectId: p.id, parentId: body.parentId || null, title: body.title || 'بدون عنوان',
+            description: body.description || '', start: body.start, end: body.end,
+            assigneeId: uidVal, assigneeIds: [uidVal],
+            createdBy: user.id, personal: false, status: 'open', createdAt: new Date().toISOString(),
+            ...recCfg, cycleCount: 1 };
+          db.notes.push(item);
+          return item;
+        });
+        save();
+        return created[0];
+      }
       const n = { id: uid(), projectId: p.id, parentId: body.parentId || null, title: body.title || 'بدون عنوان',
-        description: body.description || '', start: body.start, end: body.end, assigneeId,
+        description: body.description || '', start: body.start, end: body.end,
+        assigneeId: assigneeIds[0], assigneeIds,
         createdBy: user.id, personal: isPersonal, status: 'open', createdAt: new Date().toISOString(),
         ...recCfg, cycleCount: 1 };
       db.notes.push(n); save(); return n;
     }
     const n = byId(db.notes, id); if (!n) fail(404, 'النوتة غير موجودة');
     const deptId = noteDeptId(n);
-    const isOwnNote = (n.personal || n.createdBy === user.id) && n.assigneeId === user.id;
+    const isOwnNote = (n.personal || n.createdBy === user.id) && isNoteAssignee(n, user.id) && getAssigneeIds(n).length === 1;
 
     const completeOrScheduleNext = (confirmedByUserId, doneAtIso) => {
       const now = new Date().toISOString();
       const isRecurring = n.recurrence === 'daily' || n.recurrence === 'weekly';
+      const ids = getAssigneeIds(n);
       db.history.push({
         ...n,
+        assigneeIds: ids,
+        assigneeId: ids[0] || n.assigneeId,
         id: isRecurring ? uid() : n.id,
         sourceNoteId: n.id,
         doneAt: doneAtIso || now,
@@ -541,6 +591,7 @@ function api(req, method, url, body, user) {
         n.status = 'open';
         n.lastCompletedAt = now;
         delete n.doneAt;
+        delete n.doneBy;
         delete n.rejectNote;
         save();
         return { ok: true, removed: n.id, autoConfirmed: isOwnNote, recurringNextAt: nextSpawnAt };
@@ -552,12 +603,14 @@ function api(req, method, url, body, user) {
     };
 
     if (action === 'done' && method === 'POST') {
-      if (n.assigneeId !== user.id) fail(403, 'هذه النوتة ليست لك');
+      if (!isNoteAssignee(n, user.id)) fail(403, 'هذه النوتة ليست لك');
       if (n.status !== 'open') fail(400, 'الحالة لا تسمح');
       const now = new Date().toISOString();
       if (isOwnNote) {
         return completeOrScheduleNext(user.id, now);
       }
+      n.doneBy = Array.isArray(n.doneBy) ? n.doneBy : [];
+      if (!n.doneBy.includes(user.id)) n.doneBy.push(user.id);
       n.status = 'pending'; n.doneAt = now; save(); return n;
     }
     if (action === 'confirm' && method === 'POST') {
@@ -566,29 +619,34 @@ function api(req, method, url, body, user) {
       return completeOrScheduleNext(user.id, n.doneAt);
     }
     if (action === 'spawn-now' && method === 'POST') {
-      if (!canManageDept(user, deptId) && !isOwnNote && n.assigneeId !== user.id) fail(403, 'غير مسموح');
+      if (!canManageDept(user, deptId) && !isOwnNote && !isNoteAssignee(n, user.id)) fail(403, 'غير مسموح');
       const dur = Math.max(600000, +(n.recurDurationMs || (Date.parse(n.end) - Date.parse(n.start)) || 28800000));
       const nowMs = Date.now();
       n.start = new Date(nowMs).toISOString();
       n.end = new Date(nowMs + dur).toISOString();
       n.status = 'open';
       n.waitingNextCycle = false;
-      delete n.nextSpawnAt; delete n.doneAt; delete n.rejectNote;
+      delete n.nextSpawnAt; delete n.doneAt; delete n.doneBy; delete n.rejectNote;
       n.cycleCount = (n.cycleCount || 1) + 1;
       save(); return n;
     }
     if (action === 'reject' && method === 'POST') {
       if (!canConfirm(user, n)) fail(403, 'غير مسموح');
       if (n.status !== 'pending') fail(400, 'النوتة ليست بانتظار التأكيد');
-      n.status = 'open'; n.rejectNote = body.reason || ''; delete n.doneAt; save(); return n;
+      n.status = 'open'; n.rejectNote = body.reason || ''; delete n.doneAt; delete n.doneBy; save(); return n;
     }
     if (!canManageDept(user, deptId) && !isOwnNote) fail(403, 'غير مسموح');
     if (method === 'PUT') {
       const s = body.start ?? n.start, e = body.end ?? n.end; validateDates(s, e);
-      if (body.assigneeId && !isOwnNote) validateAssignee(user, body.assigneeId, deptId);
+      let assigneeIds = getAssigneeIds(n);
+      if (isOwnNote) {
+        assigneeIds = [user.id];
+      } else if (body.assigneeIds || body.assigneeId) {
+        assigneeIds = validateAssignees(user, body.assigneeIds, body.assigneeId, deptId);
+      }
       const recCfg = parseRec(body, n, s, e);
       Object.assign(n, { title: body.title ?? n.title, description: body.description ?? n.description,
-        start: s, end: e, assigneeId: isOwnNote ? user.id : (body.assigneeId || n.assigneeId),
+        start: s, end: e, assigneeId: assigneeIds[0], assigneeIds,
         ...recCfg });
       if (n.waitingNextCycle && (n.recurrence === 'daily' || n.recurrence === 'weekly')) {
         n.nextSpawnAt = computeNextOccurrence(n.recurrence, n.recurTime, n.recurDay, n.tzOffsetMin, Date.now(), n.start, false);

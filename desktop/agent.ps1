@@ -1,4 +1,4 @@
-# Smart Sticky Notes - Windows desktop agent
+﻿# Smart Sticky Notes - Windows desktop agent
 # Logs in as the employee, registers this device, and shows each assigned note as a sticky note on the desktop.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace Win -Name Native -MemberDefinition @'
@@ -434,7 +434,7 @@ function Poll {
   } catch { Log "poll failed: $($_.Exception.Message)"; return }
   # show open and pending notes on desktop so the user sees their visible tasks
   $script:projNames = @{}; foreach ($pr in $data.projects) { $script:projNames[$pr.id] = $pr.name }
-  $mine = if ($script:me.role -eq 'employee') { @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id }) } else { @($data.notes) }
+  $mine = if ($script:me.role -eq 'employee') { @($data.notes | Where-Object { $_.assigneeId -eq $script:me.id -or ($_.assigneeIds -and ($_.assigneeIds -contains $script:me.id)) }) } else { @($data.notes) }
   $ids = @($mine | ForEach-Object { $_.id })
   foreach ($id in @($forms.Keys)) {           # note confirmed/removed -> take it off the desktop
     if ($ids -notcontains $id) { $forms[$id].Close(); $forms[$id].Dispose(); $forms.Remove($id); $dots[$id].Close(); $dots[$id].Dispose(); $dots.Remove($id); Layout-Dots }
